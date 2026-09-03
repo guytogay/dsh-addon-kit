@@ -1,0 +1,14 @@
+# desktop MCP — DSH 接入片段（加入 cordis.patch.yml 的顶层数组）
+# 前提：已创建 venv 并 pip install -r requirements.txt（或使用下方 install.ps1）
+# install.ps1 用法：powershell -File install.ps1   （在 <kit>/mcp/desktop 下运行）
+- insert:
+    - id: mcp-desktop
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: desktop
+        transport: stdio
+        command: '%USERPROFILE%\.dsh\mcp\desktop\.venv\Scripts\python.exe'
+        args:
+          - '%USERPROFILE%\.dsh\mcp\desktop\desktop_server.py'
+        toolCallTimeoutMs: 60000
+# 注意：路径按目标机实际部署位置替换（venv python 绝对路径 + server 绝对路径）

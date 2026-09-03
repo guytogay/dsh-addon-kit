@@ -1,0 +1,68 @@
+# dsh-addon-kit manifest — 机器可读制品清单
+kit_version: 1.0.0
+generated: 2026-09-03
+source_audit: ../DSH-自定义审计-2026-09-03.md
+secrets_included: false
+
+artifacts:
+  - id: computer-use-strategy
+    kind: skill
+    dir: skills/computer-use-strategy
+    desc: 浏览器/桌面执行阶梯（L1 DOM -> L2 UIA -> L3 截图 -> L4 物理）
+    dsh_install: copy to ~/.dsh/skills/computer-use-strategy/
+    cross_agent: Claude/Cursor skills format
+    version: 1.0.0
+
+  - id: desktop-mcp
+    kind: mcp-server
+    dir: mcp/desktop
+    desc: Windows 桌面执行层（10 物理 + 7 UIA），零付费依赖
+    runtime: python>=3.11 (mcp>=1.28,<2 + mss)
+    tools: 17
+    dsh_install: install.ps1 + cordis-patch.yaml
+    cross_agent: any MCP stdio client
+    version: 1.0.0
+
+  - id: playwright-browsers-mcp
+    kind: mcp-server
+    dir: mcp/playwright-browsers
+    desc: Chrome/Edge/Firefox 三实例（DOM 级网页互动）
+    runtime: node>=18 (npm @playwright/mcp@0.0.80)
+    tools: 24 per instance
+    dsh_install: install.ps1 + cordis-patch.yaml (3 inserts)
+    cross_agent: any MCP stdio client
+    version: 1.0.0
+
+  - id: dsh-file-attach
+    kind: dsh-plugin
+    dir: plugins/dsh-file-attach
+    desc: 附件上传插件（host+browser 双面）
+    dsh_install: place under profile node_modules + cordis insert
+    cross_agent: dsh-specific
+    version: 0.1.0
+
+  - id: a2a-peer-bridge
+    kind: agent-bridge
+    dir: bridges/a2a-peer-bridge
+    desc: A2A v1.0 端点 + Peer MCP 桥（card/run_task/message/push 三路鉴权）
+    runtime: node>=18 (@a2a-js/sdk@1.1.0 + express)
+    endpoints: [a2a:39481, mcp:39480]
+    dsh_install: two-sided deploy + generate-keys.ps1
+    cross_agent: any A2A standard client (any A2A peer)
+    version: 1.6.1
+
+  - id: mobile-remote
+    kind: deployment-kit
+    dir: mobile-remote
+    desc: Tailscale 双通道手机访问（portproxy + tailscale serve + trustedHosts）
+    dsh_install: setup.ps1 (admin) + patch snippet
+    cross_agent: tailscale layer generic
+    version: 1.0.0
+
+  - id: dsh-patch-kit-release
+    kind: ui-patches
+    dir: ui-patches/dsh-patch-kit-release
+    desc: Web UI 补丁库（mobile-pwa/inject + 53 界面补丁，面向 LXC 端 DSH）
+    source_live: ../upstream/dsh-patch-kit
+    dsh_install: apply-mobile.sh / verify.sh (linux)
+    version: snapshot-2026-09-03

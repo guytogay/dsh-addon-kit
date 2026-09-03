@@ -1,0 +1,4 @@
+# DshA2a.vbs 模板 — 隐藏启动 a2a-agent.mjs（放 Windows Startup）
+' 替换 <NODE> 与 <KIT> 为实际绝对路径后保存为 DshA2a.vbs'
+Set sh = CreateObject("WScript.Shell")
+sh.Run """<NODE>"" ""<KIT>\bridges\a2a-peer-bridge\a2a-agent.mjs""", 0, False

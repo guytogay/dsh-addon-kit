@@ -1,0 +1,11 @@
+# 运行时/凭据产物（本地工作区保留，绝不提交）
+node_modules/
+.venv/
+*.log
+*.tmp
+*.token
+*.secret
+screenshots/
+push-inbox/
+.DS_Store
+Thumbs.db

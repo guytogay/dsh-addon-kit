@@ -1,0 +1,4 @@
+# DshPeerMcp.vbs 模板 — 隐藏启动 peer-mcp-server.mjs（放 Windows Startup）
+' 替换 <NODE> 与 <KIT> 为实际绝对路径后保存为 DshPeerMcp.vbs'
+Set sh = CreateObject("WScript.Shell")
+sh.Run """<NODE>"" ""<KIT>\bridges\a2a-peer-bridge\peer-mcp-server.mjs""", 0, False

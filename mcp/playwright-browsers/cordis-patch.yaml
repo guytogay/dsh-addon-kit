@@ -1,0 +1,45 @@
+# playwright-browsers MCP — DSH 接入片段（加入 cordis.patch.yml 顶层数组）
+# 前提：npm 安装 @playwright/mcp（install.ps1 或手动），Firefox 需要 npx playwright install firefox
+- insert:
+    - id: mcp-chrome
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: chrome
+        transport: stdio
+        command: 'C:\Program Files\nodejs\node.exe'
+        args:
+          - '<KIT>\mcp\playwright-browsers\..\..\playwright\node_modules\@playwright\mcp\cli.js'
+          - '--browser'
+          - 'chrome'
+          - '--user-data-dir'
+          - '<KIT>\profiles\chrome'
+        toolCallTimeoutMs: 120000
+- insert:
+    - id: mcp-edge
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: edge
+        transport: stdio
+        command: 'C:\Program Files\nodejs\node.exe'
+        args:
+          - '<KIT>\playwright\node_modules\@playwright\mcp\cli.js'
+          - '--browser'
+          - 'msedge'
+          - '--user-data-dir'
+          - '<KIT>\profiles\edge'
+        toolCallTimeoutMs: 120000
+- insert:
+    - id: mcp-firefox
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: firefox
+        transport: stdio
+        command: 'C:\Program Files\nodejs\node.exe'
+        args:
+          - '<KIT>\playwright\node_modules\@playwright\mcp\cli.js'
+          - '--browser'
+          - 'firefox'
+          - '--user-data-dir'
+          - '<KIT>\profiles\firefox'
+        toolCallTimeoutMs: 120000
+# 注意：<KIT> 替换为目标机实际路径；node.exe 路径按目标机调整

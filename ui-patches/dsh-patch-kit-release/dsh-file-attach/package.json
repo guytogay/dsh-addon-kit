@@ -1,0 +1,40 @@
+{
+  "name": "dsh-file-attach",
+  "version": "0.1.0",
+  "author": "DSH-user-handrolled",
+  "description": "Composer file attachment for DeepSeek Harness Web: a paperclip button opens the DEVICE file picker (any file type); uploaded files show as chips in the composer's top-left, laid out left-to-right; the reference line is auto-carried into the draft so no @ mention is ever needed.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./typert": {
+      "types": "./lib/typert.host.d.ts",
+      "default": "./lib/typert.host.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-input-trigger",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    }
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "zod": "^4.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-home-paths": "*",
+    "@deepseek-ai/dsh-typert-protocol": "*"
+  },
+  "license": "MIT"
+}
