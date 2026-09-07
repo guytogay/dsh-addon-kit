@@ -62,7 +62,7 @@ artifacts:
   - id: dsh-patch-kit-release
     kind: ui-patches
     dir: ui-patches/dsh-patch-kit-release
-    desc: Web UI 补丁库（mobile-pwa/inject + 53 界面补丁，面向 LXC 端 DSH）
+    desc: Web UI/性能/内网补丁库（mobile-pwa/inject + 界面补丁 + 2026-09-08 移动性能/内网包：提问框生存/并行加载/120s超时/内网模式/静态+API gzip）
     source_live: ../upstream/dsh-patch-kit
     dsh_install: apply-mobile.sh / verify.sh (linux)
-    version: snapshot-2026-09-03
+    version: snapshot-2026-09-08

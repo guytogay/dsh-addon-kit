@@ -29,3 +29,19 @@ Windows 端等价的**配置层**适配（browse 选择器/0.0.0.0/PWA 等效 me
 ## 风险提示
 - 目标路径绑定官方包（升级 DSH 前先比对补丁；patch 自带幂等+备份，失败可还原 .bak）
 - 补丁不改官方语义，仅做表现层注入；建议升级时执行 verify.sh
+
+## 2026-09-08 移动性能/内网补丁包（新增，全部参数化、幂等、不匹配即中止）
+新增补丁（node 执行；每个脚本接受目标文件路径，实例差异经参数传入）：
+- patch-question-survive.mjs  断连保留 question/requested 帧（提问框刷新/慢回复生存）
+- patch-parallel-load.mjs     插件同级依赖并行加载（44 插件串行→并行）
+- patch-hist-timeout.mjs      unary RPC 超时 30s→120s（大历史页防中止）
+- patch-lan-mode.mjs          内网模式：isLoopback 白名单 += 传入主机/IP + randomUUID 安全兜底（用法: node patch-lan-mode.mjs client.js <host> [more...]）
+- patch-static-gzip.mjs       静态响应 gzip（dist 回退件；小件受益）
+- patch-api-gzip.mjs          /api unary JSON gzip（v4：typed-array 安全 + 头合并 + 日志 %TEMP%/dsh-gzip-dbg.log；**需重启 web 生效**）
+实例参数约定（部署时按实例传入，禁止硬编码）：
+- DSH_TRUSTED_HOST（isLoopback/trustedHosts 的主机或 IP，如 <YOUR_DOMAIN>.ts.net 或 <LAN_IP>）
+- DSH_APP_TITLE / DSH_APP_NAME（实例标题，如 DSH_PC / DSH_LXC）
+- DSH_LAN_IPS（逗号分隔，服务端 trustedHosts 与客户端 isLoopback 共用）
+- 服务端 trustedHosts：编辑实例的 cordis.patch.yml 的 connection.trustedHosts（见 mobile-remote/setup 说明）
+- manifest 名称/图标/display：按实例由部署脚本或手工调整（参考 addon-manifest 的 mobile-remote）
+部署顺序（每实例）：backup → patch-*（按上表）→ cordis patch trustedHosts → 重启 web → 端到端验证（双通道 JSON + 页面级）。
