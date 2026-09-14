@@ -4,13 +4,20 @@
 # Fails (exit 1) when any of:
 #   1) real private identifiers appear (IPs, domains, local paths, private names)
 #   2) secret-looking values or secret files are committed
-#   3) required placeholders were removed (sanitization bypassed)
+#   3) a raw private identifier survives anywhere in the tree (sanitization bypassed)
 #   4) key code files fail syntax checks
 import os
-from pathlib import Path
-import re
-import subprocess
 import sys
+
+# The syntax check must not create the artifact it is checking: py_compile writes byte-code beside the
+# source, and a stray .pyc was previously committed as a published file. Suppress byte-code writing for
+# this process before any check runs.
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+sys.dont_write_bytecode = True
+
+from pathlib import Path  # noqa: E402
+import re  # noqa: E402
+import subprocess  # noqa: E402
 
 # Windows consoles default to a legacy code page (GBK here) and crash on characters such as
 # U+2194 that appear in scan findings; force UTF-8 with replacement so the gate can also
