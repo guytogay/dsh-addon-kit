@@ -5,6 +5,15 @@ source_audit: ../DSH-自定义审计-2026-09-03.md
 secrets_included: false
 
 artifacts:
+
+  - id: gh-app-identity
+    kind: tool
+    dir: tools/gh-app-identity
+    desc: 每个 agent 一个可归因的 GitHub 身份（GitHub App → 1 小时安装 token；token 默认不打印，只注入子进程）
+    runtime: python>=3.9 + openssl（签名走 openssl，不引第三方 crypto 依赖）
+    dsh_install: copy tools/gh-app-identity/ anywhere; credentials in $GH_APP_CRED_DIR (default ~/.dsh/gh-apps/)
+    cross_agent: any agent that can run python; --exec also gives gh/git the bot identity
+    version: 1.0.0
   - id: computer-use-strategy
     kind: skill
     dir: skills/computer-use-strategy
