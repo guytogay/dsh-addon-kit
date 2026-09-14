@@ -89,7 +89,12 @@ def raw_identifier_problems(root):
 SYNTAX_CHECKS = [
     ("node", ["--check", "bridges/a2a-peer-bridge/a2a-agent.mjs"]),
     ("node", ["--check", "bridges/a2a-peer-bridge/peer-mcp-server.mjs"]),
-    (sys.executable, ["-B", "-m", "py_compile", "mcp/desktop/desktop_server.py"]),
+    # Syntax without side effects: py_compile exists to write byte-code and does so even under -B, so
+    # parse and compile in memory instead. The previous form published a .pyc on every scan.
+    (sys.executable, ["-c",
+                      "import ast,sys;src=open(sys.argv[1],encoding='utf-8').read();"
+                      "compile(src,sys.argv[1],'exec');ast.parse(src,sys.argv[1])",
+                      "mcp/desktop/desktop_server.py"]),
 ]
 
 problems = []
