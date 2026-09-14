@@ -89,7 +89,7 @@ def raw_identifier_problems(root):
 SYNTAX_CHECKS = [
     ("node", ["--check", "bridges/a2a-peer-bridge/a2a-agent.mjs"]),
     ("node", ["--check", "bridges/a2a-peer-bridge/peer-mcp-server.mjs"]),
-    (sys.executable, ["-m", "py_compile", "mcp/desktop/desktop_server.py"]),
+    (sys.executable, ["-B", "-m", "py_compile", "mcp/desktop/desktop_server.py"]),
 ]
 
 problems = []
