@@ -152,7 +152,7 @@ def desktop_screenshot(monitor: int = 0, save_path: str = "", left: int | None =
 
         png = to_png(shot.rgb, shot.size)
     if not save_path:
-        save_path = f"C:\\Users\\PC\\.dsh\\mcp\\desktop\\screenshots\\screen-{int(time.time())}.png"
+        save_path = f"%USERPROFILE%\\.dsh\\mcp\\desktop\\screenshots\\screen-{int(time.time())}.png"
     import os
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -186,7 +186,7 @@ def desktop_screenshot_window(title_substring: str, save_path: str = "") -> list
 
         png = to_png(shot.rgb, shot.size)
     if not save_path:
-        save_path = f"C:\\Users\\PC\\.dsh\\mcp\\desktop\\screenshots\\window-{int(time.time())}.png"
+        save_path = f"%USERPROFILE%\\.dsh\\mcp\\desktop\\screenshots\\window-{int(time.time())}.png"
     import os
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)

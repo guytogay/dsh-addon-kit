@@ -9,6 +9,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
+import { prepareGoal, CONTEXT_CHAR_LIMIT, WORKSPACE_CHAR_LIMIT } from './peer-goal.mjs';
 import {
   A2A_PROTOCOL_VERSION,
   AGENT_CARD_PATH,
@@ -25,7 +26,9 @@ const INSTANCE_ID = 'pc-dsh';
 const HOSTNAME = '<YOUR_DOMAIN>.ts.net';
 const DSH_VERSION = (() => {
   try {
-    return JSON.parse(fs.readFileSync('C:/Users/PC/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/package.json', 'utf8')).version;
+    return JSON.parse(fs.readFileSync(process.env.DSH_PACKAGE_JSON
+    || path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@deepseek-ai', 'dsh',
+      'package.json'), 'utf8')).version;
   } catch { return 'unknown'; }
 })();
 const SESSIONS_DIR = path.join(os.homedir(), '.dsh', 'sessions');
@@ -90,16 +93,17 @@ function parseSessionDirs(query) {
 function runHeadless(goal, context, workspace) {
   return new Promise((resolve) => {
     const taskId = 'a2a-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
-    const safe = String(goal || '').replace(/["`^<>&|;%!]/g, ' ').replace(/\r?\n/g, ' ').slice(0, 2000);
+    // 防注入过滤 + 投递保真：过滤/切片语义逐字不动，超限可见 + 过滤前原文落盘（见 peer-goal.mjs）
+    const { safe, meta } = prepareGoal(taskId, goal);
     const env = { ...process.env };
-    if (context) env.DSH_PEER_CONTEXT = String(context).slice(0, 4000);
-    if (workspace) env.DSH_PEER_WORKSPACE = String(workspace).slice(0, 500);
+    if (context) env.DSH_PEER_CONTEXT = String(context).slice(0, CONTEXT_CHAR_LIMIT);
+    if (workspace) env.DSH_PEER_WORKSPACE = String(workspace).slice(0, WORKSPACE_CHAR_LIMIT);
     execFile('cmd.exe', ['/d', '/c', 'dsh', '--profile', 'headless', '--patch', FULL_PERM_PATCH, safe],
       { env, windowsHide: true, timeout: 30 * 60 * 1000, maxBuffer: 512 * 1024 },
       (err, stdout, stderr) => {
-        if (err && err.killed) resolve({ taskId, status: 'timeout', result: (stdout || '') + (stderr || ''), exitCode: null });
-        else if (err) resolve({ taskId, status: 'failed', result: (stdout || '') + (stderr || String(err)).slice(0, 1000), exitCode: err.code ?? 1 });
-        else resolve({ taskId, status: 'done', result: stdout || '', exitCode: 0 });
+        if (err && err.killed) resolve({ taskId, status: 'timeout', result: (stdout || '') + (stderr || ''), exitCode: null, ...meta });
+        else if (err) resolve({ taskId, status: 'failed', result: (stdout || '') + (stderr || String(err)).slice(0, 1000), exitCode: err.code ?? 1, ...meta });
+        else resolve({ taskId, status: 'done', result: stdout || '', exitCode: 0, ...meta });
       });
   });
 }
@@ -131,7 +135,7 @@ const agentCard = {
   skills: [
     { id: 'get_status', name: 'Get Status', description: 'Return instance id/host/version/live session count', tags: ['status'], examples: ['{"tool":"get_status"}'], inputModes: ['text'], outputModes: ['text', 'task-status'], securityRequirements: [] },
     { id: 'query_sessions', name: 'Query Sessions', description: 'List local live/persisted sessions (optional query filter)', tags: ['sessions'], examples: ['{"tool":"query_sessions","query":""}'], inputModes: ['text'], outputModes: ['text', 'task-status'], securityRequirements: [] },
-    { id: 'run_task', name: 'Run Task', description: 'Execute a headless DSH task; message text = {"tool":"run_task","goal":"...","context":"...","workspace":"..."} (plain text = goal). Callee runs with FULL permissions by owner policy.', tags: ['task'], examples: ['{"tool":"run_task","goal":"reply OK"}'], inputModes: ['text'], outputModes: ['text', 'task-status'], securityRequirements: [] },
+    { id: 'run_task', name: 'Run Task', description: 'Execute a headless DSH task; message text = {"tool":"run_task","goal":"...","context":"...","workspace":"..."} (plain text = goal). Callee runs with FULL permissions by owner policy. Delivery limits (contract v1.6.2, overflow now visible): goal first 2000 UTF-16 chars (chars, not bytes) after control-char filtering (" ` ^ < > & | ; % ! and newlines -> space); context 4000 (env DSH_PEER_CONTEXT only, currently no consumer, not in prompt); workspace 500. Raw goal over 2000 chars is spilled verbatim (pre-filter) to $DSH_HOME/peer-inbox/<taskId>.md and the result carries goalSourceChars/goalCharsKept/goalTruncated/goalFilterApplied/goalSpillPath. Send long content as a <=2000-char task card plus spill pickup; do not rely on backticks/newlines for structure.', tags: ['task'], examples: ['{"tool":"run_task","goal":"reply OK"}'], inputModes: ['text'], outputModes: ['text', 'task-status'], securityRequirements: [] },
   ],
   documentationUrl: '',
   signatures: [],

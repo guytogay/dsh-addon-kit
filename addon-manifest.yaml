@@ -44,12 +44,12 @@ artifacts:
   - id: a2a-peer-bridge
     kind: agent-bridge
     dir: bridges/a2a-peer-bridge
-    desc: A2A v1.0 端点 + Peer MCP 桥（card/run_task/message/push 三路鉴权）
+    desc: A2A v1.0 端点 + Peer MCP 桥（card/run_task/message/push 三路鉴权）；投递保真层（goal 上限可见化 + 过滤前原文 spill）；v1.7.0 增：就绪闸门（就绪前拒绝普通派发、保留 Host-owned 修复通道、动作走白名单且不经 shell）、效果账（派发前后对申报范围取清单，added/removed/modified + 回执；未声明范围记 NOT_OBSERVED 而非 0）、两个守卫（差分守卫钉死两套实现的语义、响应性守卫保证观测不阻塞服务）、watch-upstream.py（等上游裁决落到 GitHub）
     runtime: node>=18 (@a2a-js/sdk@1.1.0 + express)
     endpoints: [a2a:39481, mcp:39480]
-    dsh_install: two-sided deploy + generate-keys.ps1
+    dsh_install: two-sided deploy + generate-keys.ps1；绑定地址与路径取自环境变量（DSH_PEER_BIND / DSH_PEER_HOSTNAME / DSH_PACKAGE_JSON），无硬编码主机值
     cross_agent: any A2A standard client (any A2A peer)
-    version: 1.6.1
+    version: 1.7.0
 
   - id: mobile-remote
     kind: deployment-kit

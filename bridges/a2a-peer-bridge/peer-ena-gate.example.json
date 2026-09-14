@@ -1,0 +1,39 @@
+{
+  "_comment": "Example Host-owned gate configuration for the peer-dispatch boundary. Copy next to peer-mcp-server.mjs as peer-ena-gate.json, replace the placeholders, and the bridge will refuse ordinary peer work whose ENA home is not ready while keeping a Host-owned repair lane. Delete or rename the file to switch the gate off entirely.",
+  "productCheckout": "<path-to-ENA-checkout>",
+  "python": "python",
+  "unregisteredPolicy": "pass",
+  "_unregisteredPolicy_comment": "pass = a request naming an unregistered workspace runs exactly as before. refuse = the Host additionally requires every workspace to be registered here, while a request carrying no workspace (the coordination channel) still passes.",
+  "targets": [
+    {
+      "workspace": "<path-to-gated-workspace>",
+      "home": "<path-to-the-ena-home-that-backs-it>"
+    }
+  ],
+  "values": {
+    "_comment": "Every value a repair action uses is owned by the Host. The caller cannot supply any of them, which is what keeps the repair lane from becoming a general command runner.",
+    "timezone": "<IANA timezone, e.g. Asia/Shanghai>",
+    "language": "<working language tag, e.g. en-US>",
+    "hostProfile": "session",
+    "systemValidHours": "24",
+    "recoveryPath": "<path to recovery material you have actually rehearsed>",
+    "recoveryEvidence": "<durable reference describing that rehearsal>",
+    "rescuer": "<who can restore this home>",
+    "rescuerEvidence": "<durable reference for that claim>",
+    "rescuerType": "host"
+  },
+  "repairActions": {
+    "diagnose": {
+      "argv": ["{python}", "{product}/tools/ena_preflight.py", "--home", "{home}"]
+    },
+    "bootstrap": {
+      "_comment": "Bootstrap covers cold and incremental repair alike. A narrower variant that re-states only the confirmed values does NOT restore an expired home, so the lane must carry the verified recovery and rescuer facts to re-issue the freshness window.",
+      "argv": ["{python}", "{product}/tools/ena_first_use.py", "--home", "{home}",
+               "--timezone", "{timezone}", "--language", "{language}",
+               "--host-profile", "{hostProfile}", "--system-valid-hours", "{systemValidHours}",
+               "--verified-recovery", "{recoveryPath}", "--recovery-evidence", "{recoveryEvidence}",
+               "--verified-rescuer", "{rescuer}", "--rescuer-evidence", "{rescuerEvidence}",
+               "--rescuer-type", "{rescuerType}"]
+    }
+  }
+}
