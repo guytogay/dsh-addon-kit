@@ -42,6 +42,23 @@ artifacts:
     cross_agent: any MCP stdio client
     version: 1.0.0
 
+  - id: dsh-mobile-sidebar
+    kind: dsh-plugin
+    dir: plugins/dsh-mobile-sidebar
+    desc: 手机端左上角半透明悬浮侧栏入口（官方 shell.overlay 加法式槽位；点击调 ctx.layout.toggleSidebar）
+    dsh_install: dsh plugin --profile <profile> add <abs-dir>（或官方 install_bundle）
+    cross_agent: dsh-specific
+    version: 1.0.0
+
+  - id: dsh-ui-verify
+    kind: tool
+    dir: tools/dsh-ui-verify
+    desc: 真浏览器验证 DSH Web UI（手机视口量化审计 + 远程地址设置可用性闸门）
+    runtime: node>=20 + 系统 Chrome（playwright 从 DSH checkout 解析）
+    dsh_install: copy tools/dsh-ui-verify/ anywhere; DSH_CHECKOUT 指向 DSH 检出目录
+    cross_agent: any agent that can run node
+    version: 1.0.0
+
   - id: dsh-file-attach
     kind: dsh-plugin
     dir: plugins/dsh-file-attach
@@ -71,7 +88,7 @@ artifacts:
   - id: dsh-patch-kit-release
     kind: ui-patches
     dir: ui-patches/dsh-patch-kit-release
-    desc: Web UI/性能/内网补丁库（mobile-pwa/inject + 界面补丁 + 2026-09-08 移动性能/内网包：提问框生存/并行加载/120s超时/内网模式/静态+API gzip）
+    desc: Web UI/性能/内网补丁库（mobile-pwa/inject + 界面补丁 + 2026-09-08 移动性能/内网包：提问框生存/并行加载/120s超时/内网模式/静态+API gzip/远程地址设置放行）
     source_live: ../upstream/dsh-patch-kit
     dsh_install: apply-mobile.sh / verify.sh (linux)
     version: snapshot-2026-09-08
