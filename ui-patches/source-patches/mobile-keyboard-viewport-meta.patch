@@ -1,0 +1,18 @@
+diff --git a/apps/web/index.html b/apps/web/index.html
+index f5c2ffac06..b32fcaa80c 100644
+--- a/apps/web/index.html
++++ b/apps/web/index.html
+@@ -2,7 +2,12 @@
+ <html lang="en">
+   <head>
+     <meta charset="utf-8" />
+-    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <!-- `interactive-widget=resizes-content` shrinks the LAYOUT viewport when the soft
++         keyboard opens, so bottom-anchored UI (the composer seat) stays above the keyboard
++         instead of being covered by it. Android Chrome honours this; iOS Safari ignores it
++         and needs the visualViewport fallback in src/main.ts. `viewport-fit=cover` exposes
++         env(safe-area-inset-*) for notches and home indicators. -->
++    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+     <link rel="manifest" href="/manifest.webmanifest" />
+     <link rel="icon" type="image/svg+xml" href="/favicon-dark.svg" media="(prefers-color-scheme: dark)" />
+     <link rel="icon" type="image/svg+xml" href="/favicon.svg" media="(prefers-color-scheme: light)" />

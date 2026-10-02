@@ -53,10 +53,18 @@ artifacts:
   - id: dsh-ui-verify
     kind: tool
     dir: tools/dsh-ui-verify
-    desc: 真浏览器验证 DSH Web UI（手机视口量化审计 + 远程地址设置可用性闸门）
+    desc: 真浏览器验证 DSH Web UI（手机视口量化审计 + 远程地址设置可用性闸门 + 软键盘遮挡闸门）
     runtime: node>=20 + 系统 Chrome（playwright 从 DSH checkout 解析）
     dsh_install: copy tools/dsh-ui-verify/ anywhere; DSH_CHECKOUT 指向 DSH 检出目录
     cross_agent: any agent that can run node
+    version: 1.0.0
+
+  - id: dsh-source-patches
+    kind: ui-patches
+    dir: ui-patches/source-patches
+    desc: 面向 DSH 源码检出的补丁（手机软键盘遮挡输入框：Android 走 viewport 原生提示、iOS 走 visualViewport 实测；另含应用外壳高度消费）
+    dsh_install: cd <checkout> && git apply <patch> && pnpm run build
+    cross_agent: dsh-specific
     version: 1.0.0
 
   - id: dsh-file-attach

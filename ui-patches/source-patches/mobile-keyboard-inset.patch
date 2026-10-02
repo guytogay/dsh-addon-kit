@@ -1,0 +1,64 @@
+diff --git a/apps/web/src/main.ts b/apps/web/src/main.ts
+index 5f4786acb7..1926f16b54 100644
+--- a/apps/web/src/main.ts
++++ b/apps/web/src/main.ts
+@@ -14,6 +14,49 @@ const reportFailure = (reason: unknown): void => {
+   void desktop.failed(reason instanceof Error ? reason.message : String(reason)).catch(console.error)
+ }
+ 
++/**
++ * Publish the soft-keyboard height as `--dsh-keyboard-inset`.
++ *
++ * Two platforms, two mechanisms, one variable:
++ *
++ *   - Android Chrome honours `interactive-widget=resizes-content` (index.html), which
++ *     shrinks the LAYOUT viewport, so any bottom-anchored element stays above the
++ *     keyboard by itself. There, `innerHeight` shrinks together with the visual viewport
++ *     and this computes 0 — the meta tag alone is the fix, and this changes nothing.
++ *   - iOS Safari ignores that hint: the keyboard shrinks only the VISUAL viewport while
++ *     the layout viewport, and with it every bottom-anchored element, stays put. The
++ *     composer therefore ends up underneath the keyboard. Measuring the visual viewport
++ *     is the only way to see it.
++ *
++ * `offsetTop` is part of the subtraction because iOS also pans the page under the
++ * keyboard; without it the inset is over-reported and the composer floats too high.
++ * Focus events are included as well as resize, because some Android WebViews report the
++ * keyboard late, after focus has already moved.
++ */
++function installKeyboardInset(): void {
++  const viewport = globalThis.visualViewport
++  if (viewport === undefined || viewport === null) return
++  let queued = false
++  const apply = (): void => {
++    queued = false
++    const obscured = Math.max(0, Math.round(globalThis.innerHeight - viewport.height - viewport.offsetTop))
++    document.documentElement.style.setProperty('--dsh-keyboard-inset', `${obscured}px`)
++  }
++  const schedule = (): void => {
++    if (queued) return
++    queued = true
++    globalThis.requestAnimationFrame(apply)
++  }
++  viewport.addEventListener('resize', schedule)
++  viewport.addEventListener('scroll', schedule)
++  globalThis.addEventListener('resize', schedule)
++  // The keyboard animates in after focus, so `resize` is the real signal; focus only
++  // re-reads the current state in case a platform never fires it.
++  document.addEventListener('focusin', schedule, true)
++  document.addEventListener('focusout', schedule, true)
++  apply()
++}
++
+ try {
+   const el = document.getElementById('root')
+   if (el === null) throw new Error('web app: missing #root')
+@@ -34,6 +77,9 @@ try {
+       gate.resolve()
+     }).catch((error: unknown) => { gate.reject(error) })
+   }
++  // Install before the app renders so the variable exists when the composer's CSS is
++  // first evaluated, rather than one frame later.
++  installKeyboardInset()
+   void entry.run(desktop === undefined ? undefined : reportFailure)
+ } catch (reason) {
+   reportFailure(reason)

@@ -37,3 +37,18 @@ node dsh-remote-settings-check.mjs
 - 一个 DSH 源码 checkout（提供 playwright 与客户端产物），默认 `$HOME/Developer/deepseek-harness`，可用 `DSH_CHECKOUT` 覆盖
 - 系统安装的 Chrome
 - 输入框需可访问宿主：脚本从 `$HOME/.dsh/bin/dsh-url` 取各权威的带令牌链接
+
+## dsh-keyboard-check.mjs — 软键盘遮挡闸门（Android + iOS 双路径）
+
+验证输入框不会被手机软键盘盖住。**两平台两套机制，脚本对每条路径分别断言**：
+
+- **Android 路径**：断言浏览器实际收到的 viewport meta 含 `interactive-widget=resizes-content`
+- **iOS 路径**：用 `Object.defineProperty` 把 `window.visualViewport` 换成可控桩，模拟 300px 键盘后断言变量发布为 `300px`、且输入框底边落在可视区内
+
+```bash
+node dsh-keyboard-check.mjs [port]
+```
+
+退出码：`0` 两条路径都通过 / `1` 有失败 / `2` 无法判定
+
+**验证边界（脚本自己会打印）**：Playwright 无法真正弹出手机键盘，测的是**应用对几何变化的反应**，不是真实键盘。Android 侧由 meta 标签覆盖，iOS 侧由实测可视区覆盖；**真实设备行为仍需人工确认**。

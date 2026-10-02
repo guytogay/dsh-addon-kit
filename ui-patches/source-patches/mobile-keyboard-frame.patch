@@ -1,0 +1,24 @@
+diff --git a/packages/client/ui-layout/src/client/AppFrame.module.css b/packages/client/ui-layout/src/client/AppFrame.module.css
+index 56494a90ee..5d6adcf3cc 100644
+--- a/packages/client/ui-layout/src/client/AppFrame.module.css
++++ b/packages/client/ui-layout/src/client/AppFrame.module.css
+@@ -2,7 +2,18 @@
+   position: relative; /* anchors the drag handles, which straddle column borders */
+   display: grid;
+   grid-template-rows: 100%;
+-  height: 100%;
++  /* Soft-keyboard handling: one mechanism for both platforms.
++     `--dsh-keyboard-inset` is published by apps/web/src/main.ts, and is 0 wherever the
++     layout viewport already accounts for the keyboard — Android Chrome, via
++     `interactive-widget=resizes-content` in apps/web/index.html. iOS Safari ignores that
++     hint and shrinks only the visual viewport, so the frame keeps full height and its
++     bottom-anchored composer hides underneath; subtracting the inset here pulls the whole
++     frame into the visible area instead.
++     Shrinking the frame rather than offsetting the composer is deliberate: the composer
++     seat is `position: sticky`, which only moves an element its container would otherwise
++     push out, so it does not respond at all on a short transcript (measured 2026-10-02
++     with a simulated 300px keyboard: the variable published correctly, the seat stayed). */
++  height: calc(100% - var(--dsh-keyboard-inset, 0px));
+   overflow: hidden;
+   background: var(--dsw-alias-bg-base);
+ }
