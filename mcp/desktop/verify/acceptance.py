@@ -265,8 +265,28 @@ def main():
                   and chrome_card["app"]["evidence"],
                   "evidence={}".format(str(chrome_card["app"]["evidence"])[:70]))
 
-    skip("a moving window reports not-settled and names the moving signal",
-         "no deterministic animated fixture in this runner yet")
+    # ---- a window that keeps moving must NOT be reported as settled ----
+    before_titles = set(titles())
+    animated_process = subprocess.Popen(["pwsh", "-NoProfile", "-File",
+                                        os.path.join(HERE, "fixture_animated.ps1")])
+    animated = new_window(before_titles, exact=("C024-ANIMATED",), timeout=20.0)
+    try:
+        if animated is None:
+            skip("a moving window reports not-settled and names the moving signal",
+                 "the animated fixture did not open")
+        else:
+            moving = json.loads(d.desktop_wait_stable(animated, stable_ms=300, timeout_ms=3000))
+            check("a moving window reports not-settled and names the moving signal",
+                  moving.get("settled") is False and int(moving.get("samples", 0)) >= 2
+                  and "pixels" in str(moving.get("last_moving_signal") or ""),
+                  "settled={} samples={} last_moving={} waited={}ms".format(
+                      moving.get("settled"), moving.get("samples"),
+                      moving.get("last_moving_signal"), moving.get("waited_ms")))
+    finally:
+        try:
+            animated_process.terminate()
+        except Exception:  # noqa: BLE001
+            pass
 
     if not args.keep_fixtures:
         for image in fixtures:

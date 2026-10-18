@@ -185,6 +185,7 @@ def desktop_screenshot_window(title_substring: str, save_path: str = "") -> list
         from mss.tools import to_png
 
         png = to_png(shot.rgb, shot.size)
+        frame = _cua_frame_id(_cua_cells_from_shot(shot))
     if not save_path:
         save_path = os.path.join(_CUA_SHOT_DIR, "window-{}.png".format(int(time.time())))
     import os
@@ -194,7 +195,9 @@ def desktop_screenshot_window(title_substring: str, save_path: str = "") -> list
         f.write(png)
     b64 = base64.b64encode(png).decode("ascii")
     return [
-        TextContent(type="text", text=f"window screenshot saved: {save_path}"),
+        TextContent(type="text", text="window screenshot saved: {} | frame_id={} "
+                                      "(pass it as screenshot_id to desktop_click_verified to bind the "
+                                      "coordinates to this frame)".format(save_path, frame)),
         ImageContent(type="image", data=b64, mimeType="image/png"),
     ]
 
@@ -487,6 +490,45 @@ def _cua_window_region(hwnd):
             "height": max(1, rect.bottom - rect.top)}
 
 
+_CUA_MOVED_CELLS = 12         # cells whose luminance jumped by _CUA_CELL_JUMP or more
+_CUA_CELL_JUMP = 32
+
+
+def _cua_cells_from_shot(shot, cols=48, rows=27):
+    """Sampled luminance grid of one already-captured mss shot: cols x rows cells, each the mean
+    of a 2x2 block. A real grid (not one mean per row) is what makes a small moving object
+    visible: a 36x36 square changes ~16 cells by ~200 levels while a blinking caret changes one
+    or two cells, so the jump COUNT separates "something moved" from "a caret blinked"."""
+    width, height = shot.size
+    data = shot.rgb
+    cells = []
+    for row in range(rows):
+        y0 = min(height - 1, int((row + 0.5) * height / rows))
+        for col in range(cols):
+            x0 = min(width - 1, int((col + 0.5) * width / cols))
+            total = 0
+            counted = 0
+            for dy in (0, 1):
+                y = min(height - 1, y0 + dy)
+                base = y * width * 3
+                for dx in (0, 1):
+                    x = min(width - 1, x0 + dx)
+                    index = base + x * 3
+                    total += data[index] + data[index + 1] + data[index + 2]
+                    counted += 3
+            cells.append(int(total / counted))
+    return cells
+
+
+def _cua_count_moved_cells(before_cells, after_cells, jump=None):
+    """How many cells changed by a large amount. Answers "did something move", which the mean
+    difference alone cannot: a small object barely shifts the mean but lights up its own cells."""
+    jump = _CUA_CELL_JUMP if jump is None else jump
+    if not before_cells or not after_cells or len(before_cells) != len(after_cells):
+        return None
+    return sum(1 for a, b in zip(before_cells, after_cells) if abs(a - b) >= jump)
+
+
 def _cua_pixel_state(hwnd, cols=48, rows=27):
     """Pixel evidence for one window, two ways:
       * `cells` - sampled luminance grid; tolerant to carets and overlays, immune to noise;
@@ -499,20 +541,7 @@ def _cua_pixel_state(hwnd, cols=48, rows=27):
         with mss.mss() as sct:
             shot = sct.grab(_cua_window_region(hwnd))
             exact = _hashlib.sha256(to_png(shot.rgb, shot.size)).hexdigest()
-        width, height = shot.size
-        data = shot.rgb
-        cells = []
-        for row in range(rows):
-            y = min(height - 1, int((row + 0.5) * height / rows))
-            base = y * width * 3
-            total = 0
-            counted = 0
-            for col in range(cols):
-                x = min(width - 1, int((col + 0.5) * width / cols))
-                index = base + x * 3
-                total += data[index] + data[index + 1] + data[index + 2]
-                counted += 3
-            cells.append(int(total / counted))
+        cells = _cua_cells_from_shot(shot, cols, rows)
         return "ok", exact, cells
     except Exception as exc:  # noqa: BLE001
         return _CUA_PIXEL_UNAVAILABLE, _cua_clip(exc, 120), None
@@ -586,6 +615,7 @@ def _cua_observe(title_substring, depth=6, max_items=400):
         "window": data.get("window") or opened_title,
         "hwnd": int(hwnd),
         "elements": len(items),
+        "tree_readable": len(items) > 0,
         "revision": _cua_revision(items)[:16],
         "pixel_state": pixel_state,
         "pixel_id": exact,
@@ -718,6 +748,7 @@ def _cua_wait_stable(title_substring, stable_ms=400, timeout_ms=6000, interval_m
     last_moving = "none"
     previous = None
     final = None
+    moved_cells = None
     while True:
         current = _cua_observe(title_substring, depth, max_items)
         samples += 1
@@ -730,7 +761,9 @@ def _cua_wait_stable(title_substring, stable_ms=400, timeout_ms=6000, interval_m
                 moving.append("tree")
             if previous["pixel_state"] == "ok" and current["pixel_state"] == "ok":
                 delta = _cua_pixel_delta(previous["cells"], current["cells"])
-                if delta is not None and delta > tolerance:
+                moved_cells = _cua_count_moved_cells(previous["cells"], current["cells"])
+                if (delta is not None and delta > tolerance) or \
+                        (moved_cells is not None and moved_cells >= _CUA_MOVED_CELLS):
                     moving.append("pixels")
             if moving:
                 last_change = time.time()
@@ -741,6 +774,7 @@ def _cua_wait_stable(title_substring, stable_ms=400, timeout_ms=6000, interval_m
         pixel_signal = "ok" if current["pixel_state"] == "ok" else _CUA_PIXEL_UNAVAILABLE
         base = {"samples": samples, "waited_ms": waited_ms, "last_moving_signal": last_moving,
                 "pixel_signal": pixel_signal, "pixel_tolerance": tolerance,
+                "moved_cells": moved_cells, "moved_cells_threshold": _CUA_MOVED_CELLS,
                 "revision": current["revision"], "frame_id": current["frame_id"],
                 "pixel_id": current["pixel_id"]}
         if samples >= 2 and (now - last_change) * 1000 >= stable_ms:
@@ -772,10 +806,15 @@ def desktop_observe(title_substring: str, depth: int = 6, max_items: int = 400,
         return json.dumps({"ok": False, "reason": observation.get("reason")}, ensure_ascii=False)
     _CUA_LAST[observation["hwnd"]] = observation
     payload = {"ok": True, "window": observation["window"], "elements": observation["elements"],
+               "tree_readable": observation["tree_readable"],
                "revision": observation["revision"], "frame_id": observation["frame_id"],
                "pixel_id": observation["pixel_id"], "pixel_state": observation["pixel_state"],
                "note": "revision = structure changed; frame_id = tolerant pixel identity "
                        "(use as screenshot_id); pixel_id = exact bytes"}
+    if not observation["tree_readable"]:
+        payload["caveat"] = ("the element tree is empty (a UWP/XAML window exposes none to UIA2), so the "
+                             "revision is a constant and no text verdict is possible here; judge this "
+                             "window by the pixel signature")
     if observation["pixel_state"] != "ok":
         payload["caveat"] = "the pixel signal is unavailable here; only the element tree is evidence"
     if include_items:
@@ -892,6 +931,11 @@ def desktop_click_verified(x: int, y: int, title_substring: str = "", expect_tex
         if not expect_text:
             effect, verified = "unverifiable", False
             reason = "no expect_text was declared, so delivery cannot be judged; re-observe instead of retrying"
+        elif not before["tree_readable"]:
+            effect, verified = "unverifiable", False
+            reason = ("the element tree is empty, so no text verdict is possible; the pixel signal is the only "
+                      "evidence here (frame {} -> {}). Do not read this as \"the click missed\""
+                      .format(_cua_clip(before["frame_id"], 16), _cua_clip(after.get("frame_id"), 16)))
         elif had_expect_before:
             effect, verified = "invalid-expectation", False
             reason = ('"{}" was already present before the action, so it is not evidence; '
@@ -911,6 +955,8 @@ def desktop_click_verified(x: int, y: int, title_substring: str = "", expect_tex
             "pixel_signal": stable.get("pixel_signal"),
             "revision": {"before": before["revision"], "after": after.get("revision")},
             "elements": {"before": before["elements"], "after": after.get("elements")},
+            "tree_readable": before["tree_readable"],
+            "pixel_changed": before["frame_id"] != after.get("frame_id"),
             "reason": reason,
         }, ensure_ascii=False)
     finally:
@@ -958,10 +1004,11 @@ def desktop_type_verified(text: str, title_substring: str = "", control_name: st
             already_present = True
         elif before_observed and before_observed.get("ok") and _cua_contains(before_observed, expectation):
             already_present = True
-        if readback is None:
+        if not readback:
             effect, verified = "unverifiable", False
             reason = ("no readback channel could read this control (ValuePattern, TextPattern and "
-                      "the element tree were all empty); re-observe before retrying")
+                      "the element tree all came back empty - a UWP/XAML window exposes no tree to "
+                      "UIA2); re-observe before retrying, and do not retype blindly")
         elif already_present:
             effect, verified = "invalid-expectation", False
             reason = ('"{}" was already in the readback before typing, so it cannot be evidence; '
@@ -1066,12 +1113,48 @@ def _cua_process_exe(pid):
         kernel32.CloseHandle(handle)
 
 
+def _cua_child_pid_different_from(hwnd, owner_pid):
+    """A packaged (UWP) app's window belongs to the frame host; the app itself owns a child window."""
+    candidates = []
+
+    @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+    def callback(child, lparam):
+        try:
+            if not user32.IsWindowVisible(child):
+                return True
+            pid = wt.DWORD()
+            user32.GetWindowThreadProcessId(child, ctypes.byref(pid))
+            if pid.value and int(pid.value) != owner_pid:
+                candidates.append(int(pid.value))
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+    try:
+        user32.EnumChildWindows(hwnd, callback, 0)
+    except Exception:  # noqa: BLE001
+        return None
+    return candidates[0] if candidates else None
+
+
 def _cua_app_profile(hwnd):
     """Classify an app from evidence its own files carry - never from its name."""
-    pid = _cua_window_pid(hwnd)
+    owner_pid = _cua_window_pid(hwnd)
+    pid = owner_pid
     exe = _cua_process_exe(pid)
     evidence = []
     exe_name = ""
+    if exe and os.path.basename(exe).lower() in ("applicationframehost.exe", "runtimebroker.exe"):
+        child_pid = _cua_child_pid_different_from(hwnd, owner_pid)
+        if child_pid:
+            child_exe = _cua_process_exe(child_pid)
+            evidence.append("window owner is {} (packaged app); the app itself is pid {}"
+                            .format(os.path.basename(exe), child_pid))
+            if child_exe:
+                pid, exe = child_pid, child_exe
+        else:
+            evidence.append("window owner is {} and no other process owns a visible child window, "
+                            "so the app process could not be identified".format(os.path.basename(exe)))
     if exe:
         exe_name = os.path.basename(exe).lower()
         evidence.append("process image {}".format(os.path.basename(exe)))
@@ -1099,6 +1182,7 @@ def _cua_app_profile(hwnd):
         evidence.append("the process image could not be queried")
     return {
         "pid": pid,
+        "window_owner_pid": owner_pid,
         "exe": exe,
         "exe_name": exe_name,
         "is_chromium_browser": is_chromium_exe,

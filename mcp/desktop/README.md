@@ -62,14 +62,20 @@ pip install "mcp>=1.28,<2" mss
 ```bash
 python smoke_test.py                     # 冒烟：握手 + 一次 screenshot + list_windows
 python verify/acceptance.py --module-dir <驱动目录> --json report.json
+python verify/in_host_check.py --server <驱动目录>/desktop_server.py --json in-host.json
 ```
+`verify/in_host_check.py` 走 **MCP 协议**（initialize → tools/list → tools/call）验真实工具面。
+为什么要两条：进程内验收会把**宿主环境类**缺陷判成绿——本机就漏过一次"回复含中文在宿主内变空输出"，
+独立进程里永远看不到。
 `verify/acceptance.py` 是可重跑验收：PASS / FAIL / SKIP 三态，**SKIP 必须带理由且不算通过**，
 有 FAIL 即非零退出。夹具是脚本自己启动并清理的窗口（计算器 + 自带 WinForms 对话框），
 按"启动后新出现的窗口"识别，**不用标题子串认夹具**。
 本机实测（Windows 11 / 1920×1080 / DPI 96）：**14 PASS / 0 FAIL / 1 SKIP**。
 
 ## 设计要点（来自实测，不是照抄）
-- **静止与绑定用粗签名**：`frame_id` 是 48×27 采样亮度网格、32 级量化；精确 sha256 只作辅助。
+- **静止与绑定用粗签名**：`frame_id` 是 48×27 采样亮度网格（每格 2×2 块均值）、32 级量化；
+  静止判据另加**跳变格计数**（实测动画窗 49-58 格 / 静止窗 3-6 格，阈值 12）——只看平均差会把
+  小目标移动平均掉（动画窗平均差仅 1.33，低于容差 1.5）。精确 sha256 只作辅助。
   实测精确哈希会被光标闪烁/桌面覆盖层打破（静窗 9 次采样 6.3 s 仍报在动），粗签名 2 次采样 1.1 s 收敛。
 - **回读按通道分级**：ValuePattern → TextPattern → 元素树；三者都读不到时报 `unverifiable`，
   不能报 `not-met`（记事本的编辑器就是"读不到但确实写进去了"的例子）。

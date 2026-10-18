@@ -65,6 +65,9 @@ ok: true, verified: false, effect: "unverifiable", verification_required: true
 - **至少两次采样**：一次慢观察本身就能耗掉 `stable_ms`，单次采样是假稳定。
 - 一直动就**如实报 unstable**，并写清"最后在动的是哪个信号"。
 - 像素信号不可用时**要说不可用**，不能当成"没变化"。
+- 像素判据有**两条**：采样网格的**平均亮度差**（大面积变化）＋ **跳变格子计数**（小目标移动）。
+  只用平均值会把"一个小方块在动"平均掉——实测动画窗口平均差 1.33（低于容差 1.5）却真的在动；
+  改成 48×27 真网格后同一窗口跳变格 49-58、静止窗 3-6，阈值取 12 才分得开。
 
 ### B6 散列只答"变没变"
 `Image sha256` / revision / 内容散列能证明**变没变**，不能证明**是什么**。要断言内容，必须读文本。
@@ -93,7 +96,8 @@ ok: true, verified: false, effect: "unverifiable", verification_required: true
 - 换成 125%/150% 缩放时才需要换算；**换算前先确认 DPI**，不要沿用别处的系数。
 
 ### C3 截图落点
-`desktop_screenshot`/`desktop_screenshot_window` 会返回保存路径 + **`Image sha256`**。
+`desktop_screenshot`/`desktop_screenshot_window` 会返回保存路径 + **`Image sha256`**，
+`desktop_screenshot_window` 还返回 **`frame_id`**——截图路线上把坐标绑帧就用它当 `screenshot_id`。
 定位元素时按返回图片尺寸与真实窗口 rect 换算，别拿截图坐标直接当屏幕坐标用（窗口不在 (0,0) 时必错）。
 
 ## D. 并发（这台机器会有别的会话）
@@ -159,7 +163,7 @@ python <把 acceptance.py 放在哪>/acceptance.py --module-dir "$env:USERPROFIL
 | UWP/XAML 窗口对 **UIA2** 不暴露树（PowerShell 5.1 加载的 UIAutomationClient），「设置」深度 6/10 都是 0 元素 | 本机实测 2026-10-19 | 走像素/视觉；这类窗口上文本判据不可能成立 |
 | 中文/非 ASCII 标题与控件名曾在宿主内变成**空输出**（helper 继承了父进程控制台编码） | 本机实测 2026-10-19，已在 `uia_helper.ps1` 钉死 UTF-8 输出 | 生产者与消费者同口径（消费端本来就按 UTF-8 解码） |
 | 打包应用（UWP）的 UIA 名与标题栏不一致，按名字找不到窗口 | 本机实测 2026-10-19 | 先按 Win32 窗口标题找 hwnd 再 `FromHandle`（helper 已改） |
-| 打包应用的窗口所有者常是 `ApplicationFrameHost.exe`，不是应用自己 → `probe_app` 的 Chromium/Electron 证据**不完整**（实测「计算器」的 exe 报的是 frame host） | 本机实测 2026-10-19 | 当"未分类"处理而不是"非 Chromium"；要确证就找子窗口的真实 pid |
+| 打包应用的窗口所有者常是 `ApplicationFrameHost.exe`，不是应用自己 | 本机实测 2026-10-19 | `probe_app` 已改为**找子窗口的真实 pid**再分类，并在 `evidence` 里同时报 `window_owner_pid` 与 `pid`；两者都对不上时才按"未分类"处理 |
 | Open/Save 原生面板不可自动化 | 沿用他机（macOS）结论 | 网页走 `browser_file_upload`；原生应用把路径粘进应用自身 UI |
 | 网页 HTML5 拖放不可用 | 沿用他机实测，**本机未复验** | 让页面暴露可编程接口，或点/键盘代替拖放 |
 | 无模型级取消原语 | 契约层面的诚实结论 | "中止=未知，先复验" |
