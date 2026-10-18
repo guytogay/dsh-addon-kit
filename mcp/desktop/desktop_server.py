@@ -152,7 +152,7 @@ def desktop_screenshot(monitor: int = 0, save_path: str = "", left: int | None =
 
         png = to_png(shot.rgb, shot.size)
     if not save_path:
-        save_path = f"%USERPROFILE%\\.dsh\\mcp\\desktop\\screenshots\\screen-{int(time.time())}.png"
+        save_path = os.path.join(_CUA_SHOT_DIR, "screen-{}.png".format(int(time.time())))
     import os
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -186,7 +186,7 @@ def desktop_screenshot_window(title_substring: str, save_path: str = "") -> list
 
         png = to_png(shot.rgb, shot.size)
     if not save_path:
-        save_path = f"%USERPROFILE%\\.dsh\\mcp\\desktop\\screenshots\\window-{int(time.time())}.png"
+        save_path = os.path.join(_CUA_SHOT_DIR, "window-{}.png".format(int(time.time())))
     import os
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -425,6 +425,832 @@ def desktop_uia_read_text(title_substring: str, name: str, max_chars: int = 1500
 def desktop_uia_scroll(title_substring: str, name: str, direction: str, amount: str = "small", control_type: str | None = None) -> str:
     """Scroll a scrollable control via ScrollPattern (direction: up/down/left/right, amount: small/large)."""
     return _uia({"action": "scroll", "title": title_substring, "name": name, "control_type": control_type or "", "direction": direction, "amount": amount})
+
+
+
+
+# ─────────────────────── computer-use contract layer (c021) ───────────────────────
+# Ported RULES (not code) from a macOS-side computer-use contract kit; the mechanisms
+# are Windows shapes. Three rules drive everything below:
+#   1. delivery is not effect — every mutating call returns a typed verdict;
+#   2. an expectation is evidence only if it newly appeared (absent before, present after);
+#   3. coordinates belong to the frame they were read from — a stale frame is refused.
+#
+# Two measured corrections to the source kit, both from this machine (2026-10-19):
+#   * an exact screenshot hash is too brittle as a quiescence/binding signal — a blinking
+#     caret or a desktop overlay changes a window's bytes while nothing meaningful moved
+#     (observed: 9 samples, 6.3 s, "still moving: pixels" on a quiet window). So the pixel
+#     evidence is a COARSE signature (sampled luminance grid, quantized) plus a reported
+#     delta; the exact sha256 is kept and reported, but it does not decide anything alone.
+#   * a readback must use a channel that can actually see the text: ValuePattern, then
+#     TextPattern, then the element tree — and "no channel could read it" is `unverifiable`,
+#     never `not-met`.
+# Learned-signature compliance (k-0092 / k-0095): an unreadable signal is never coerced into
+# the neighbouring meaning — an unavailable pixel signal is reported as unavailable and cannot
+# make a window look settled.
+
+import hashlib as _hashlib
+from collections import Counter as _Counter
+
+# The UIA helper is resolved next to this module (line 27). A candidate copy therefore cannot
+# observe anything where it lives, which is exactly where the closed loop wants it tested.
+# DSH_UIA_HELPER lets a candidate run against its own copy; unset means "unchanged behaviour".
+if os.environ.get("DSH_UIA_HELPER"):
+    _UIA_SCRIPT = os.environ["DSH_UIA_HELPER"]
+
+_CUA_LEASE_DIR = os.environ.get("DSH_CUA_LEASE_DIR") or os.path.join(
+    os.path.expanduser("~"), ".dsh", "computer-use", "leases")
+_CUA_LEASE_TTL = 30.0            # seconds before another owner may take over
+_CUA_PIXEL_TOLERANCE = 1.5       # mean |cell delta| (0-255) still counted as "the same frame"
+_CUA_LAST = {}                   # hwnd -> last observation (evidence for diff/verdicts)
+_CUA_PIXEL_UNAVAILABLE = "unavailable"
+
+_CUA_SHOT_DIR = os.environ.get("DSH_CUA_SCREENSHOT_DIR") or os.path.join(
+    os.path.expanduser("~"), ".dsh", "mcp", "desktop", "screenshots")
+
+try:  # pid of a window, for a per-window lease key
+    user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+except Exception:  # noqa: BLE001
+    pass
+
+
+def _cua_clip(value, limit=200):
+    text = "" if value is None else str(value)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _cua_window_region(hwnd):
+    rect = wt.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    return {"left": rect.left, "top": rect.top,
+            "width": max(1, rect.right - rect.left),
+            "height": max(1, rect.bottom - rect.top)}
+
+
+def _cua_pixel_state(hwnd, cols=48, rows=27):
+    """Pixel evidence for one window, two ways:
+      * `cells` - sampled luminance grid; tolerant to carets and overlays, immune to noise;
+      * `exact` - sha256 of the PNG; answers 'byte-identical', which a caret breaks.
+    Returns ('ok', exact, cells) or ('unavailable', reason, None)."""
+    try:
+        import mss
+        from mss.tools import to_png
+
+        with mss.mss() as sct:
+            shot = sct.grab(_cua_window_region(hwnd))
+            exact = _hashlib.sha256(to_png(shot.rgb, shot.size)).hexdigest()
+        width, height = shot.size
+        data = shot.rgb
+        cells = []
+        for row in range(rows):
+            y = min(height - 1, int((row + 0.5) * height / rows))
+            base = y * width * 3
+            total = 0
+            counted = 0
+            for col in range(cols):
+                x = min(width - 1, int((col + 0.5) * width / cols))
+                index = base + x * 3
+                total += data[index] + data[index + 1] + data[index + 2]
+                counted += 3
+            cells.append(int(total / counted))
+        return "ok", exact, cells
+    except Exception as exc:  # noqa: BLE001
+        return _CUA_PIXEL_UNAVAILABLE, _cua_clip(exc, 120), None
+
+
+def _cua_frame_id(cells):
+    """Stable frame identity: cell luminances quantized into 32 bands so a caret, an
+    anti-aliasing flicker or a soft overlay does not mint a new frame."""
+    if cells is None:
+        return _CUA_PIXEL_UNAVAILABLE
+    banded = bytes(min(31, cell // 8) for cell in cells)
+    return _hashlib.sha256(banded).hexdigest()[:16]
+
+
+def _cua_pixel_delta(before_cells, after_cells):
+    """Mean absolute luminance difference over the sampled grid (0-255), or None."""
+    if not before_cells or not after_cells or len(before_cells) != len(after_cells):
+        return None
+    return round(sum(abs(a - b) for a, b in zip(before_cells, after_cells)) / len(before_cells), 2)
+
+
+def _cua_rect_key(rect):
+    parts = []
+    for piece in str(rect or "").replace(";", ",").split(","):
+        try:
+            parts.append(str(int(float(piece.strip()))))
+        except Exception:  # noqa: BLE001
+            parts.append(piece.strip())
+    return ",".join(parts)
+
+
+def _cua_fingerprint(item):
+    """role + name + enabled + rounded frame: order-independent element identity."""
+    return "{}|{}|{}|{}".format(item.get("type") or "", item.get("name") or "",
+                                item.get("en"), _cua_rect_key(item.get("rect")))
+
+
+def _cua_revision(items):
+    fingerprints = sorted(_cua_fingerprint(item) for item in items)
+    return _hashlib.sha256("\n".join(fingerprints).encode("utf-8")).hexdigest()
+
+
+def _cua_contains(observation, needle):
+    """Literal match first, then whitespace-normalized: a literal miss alone is a known
+    false negative (the text can land with different spacing), and retyping would duplicate it."""
+    if not needle:
+        return False
+    haystack = "\n".join(observation.get("lines") or [])
+    if needle in haystack:
+        return True
+    return " ".join(needle.split()) in " ".join(haystack.split())
+
+
+def _cua_observe(title_substring, depth=6, max_items=400):
+    """One observation of a window: element fingerprints, content revision, pixel evidence."""
+    reply = _uia({"action": "tree", "title": title_substring, "depth": depth, "max": max_items})
+    try:
+        data = json.loads(reply)
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "reason": "the UIA reply was not JSON: " + _cua_clip(reply, 200)}
+    if not data.get("ok"):
+        return {"ok": False, "reason": str(data.get("msg") or "the UIA tree could not be read")}
+    found = _find_window(title_substring)
+    if found is None:
+        return {"ok": False, "reason": "the window disappeared while it was being observed: " + title_substring}
+    hwnd, opened_title = found
+    items = data.get("items") or []
+    pixel_state, exact, cells = _cua_pixel_state(hwnd)
+    return {
+        "ok": True,
+        "window": data.get("window") or opened_title,
+        "hwnd": int(hwnd),
+        "elements": len(items),
+        "revision": _cua_revision(items)[:16],
+        "pixel_state": pixel_state,
+        "pixel_id": exact,
+        "frame_id": _cua_frame_id(cells),
+        "cells": cells,
+        "lines": ["{} {}".format(item.get("type") or "", item.get("name") or "") for item in items],
+        "items": items,
+        "at": time.time(),
+    }
+
+
+def _cua_lease_key(hwnd):
+    pid = wt.DWORD()
+    try:
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        owner_pid = int(pid.value)
+    except Exception:  # noqa: BLE001
+        owner_pid = 0
+    return "win-{}-{}".format(owner_pid, int(hwnd))
+
+
+def _cua_lease_owner():
+    return os.environ.get("DSH_SESSION_ID") or "pid:{}".format(os.getpid())
+
+
+def _cua_lease_path(key):
+    safe = "".join(ch if (ch.isalnum() or ch in "-_") else "-" for ch in key)
+    return os.path.join(_CUA_LEASE_DIR, safe + ".json")
+
+
+def _cua_lease_acquire(hwnd):
+    """One-sided defence: our own agent sessions honour the lease; nothing can force another
+    vendor's agent to. It is politeness inside this host, not a mutex."""
+    try:
+        os.makedirs(_CUA_LEASE_DIR, exist_ok=True)
+    except OSError as exc:
+        return {"ok": False, "reason": "lease directory unavailable: " + _cua_clip(exc, 120)}
+    key = _cua_lease_key(hwnd)
+    path = _cua_lease_path(key)
+    payload = {"key": key, "owner": _cua_lease_owner(), "at": time.time()}
+    for _attempt in (1, 2):
+        try:
+            handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            held, unreadable = None, False
+            try:
+                with open(path, encoding="utf-8") as existing:
+                    held = json.load(existing)
+            except Exception:  # noqa: BLE001
+                unreadable = True
+            if unreadable:
+                # An unreadable lease is neither "free" nor "expired": report and stop.
+                return {"ok": False, "busy": True, "contended": True, "key": key,
+                        "reason": "a lease file exists but could not be read ({}); refusing to take it over".format(path)}
+            holder = (held or {}).get("owner") or "unknown"
+            age = time.time() - float((held or {}).get("at") or 0.0)
+            if holder == _cua_lease_owner():
+                return {"ok": True, "key": key, "note": "this session already holds the lease"}
+            if age > _CUA_LEASE_TTL:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                continue
+            return {"ok": False, "busy": True, "contended": True, "key": key, "holder": holder,
+                    "held_for_s": round(age, 1),
+                    "reason": "busy - held by {} for {} s; nothing was delivered".format(holder, round(age, 1))}
+        except OSError as exc:
+            return {"ok": False, "reason": "lease could not be created: " + _cua_clip(exc, 120)}
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as out:
+                json.dump(payload, out)
+            return {"ok": True, "key": key}
+        except OSError as exc:
+            return {"ok": False, "reason": "lease could not be written: " + _cua_clip(exc, 120)}
+    return {"ok": False, "busy": True, "contended": True, "key": key,
+            "reason": "the lease could not be taken even after taking over an expired one"}
+
+
+def _cua_lease_release(hwnd):
+    path = _cua_lease_path(_cua_lease_key(hwnd))
+    try:
+        with open(path, encoding="utf-8") as held_file:
+            held = json.load(held_file)
+    except FileNotFoundError:
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    if (held or {}).get("owner") != _cua_lease_owner():
+        return False
+    try:
+        os.remove(path)
+        return True
+    except OSError:
+        return False
+
+
+def _cua_read_text(title_substring, control_name):
+    """Read the named control's text through whichever channel can see it.
+    Returns (source, text) with source in ValuePattern / TextPattern, or (None, None)."""
+    if not control_name:
+        return None, None
+    value = _uia({"action": "getvalue", "title": title_substring, "name": control_name, "control_type": ""})
+    try:
+        parsed = json.loads(value)
+    except Exception:  # noqa: BLE001
+        parsed = {}
+    if parsed.get("ok") and parsed.get("value") is not None:
+        return "ValuePattern", str(parsed["value"])
+    text = _uia({"action": "text", "title": title_substring, "name": control_name,
+                 "control_type": "", "max_chars": 600})
+    try:
+        parsed = json.loads(text)
+    except Exception:  # noqa: BLE001
+        parsed = {}
+    if parsed.get("ok") and parsed.get("text") is not None:
+        return "TextPattern", str(parsed["text"])
+    return None, None
+
+
+def _cua_wait_stable(title_substring, stable_ms=400, timeout_ms=6000, interval_ms=150,
+                     depth=6, max_items=400, tolerance=None):
+    """Measured quiescence: the element tree AND the coarse pixel signature must both stop
+    moving. Two samples are the floor - one slow observation can already outlast stable_ms and
+    fake a quiet window. Never claims to have waited when it could not settle."""
+    tolerance = _CUA_PIXEL_TOLERANCE if tolerance is None else tolerance
+    started = time.time()
+    samples = 0
+    last_change = started
+    last_moving = "none"
+    previous = None
+    final = None
+    while True:
+        current = _cua_observe(title_substring, depth, max_items)
+        samples += 1
+        if not current.get("ok"):
+            return {"settled": False, "samples": samples, "reason": current.get("reason")}
+        final = current
+        if previous is not None:
+            moving = []
+            if previous["revision"] != current["revision"]:
+                moving.append("tree")
+            if previous["pixel_state"] == "ok" and current["pixel_state"] == "ok":
+                delta = _cua_pixel_delta(previous["cells"], current["cells"])
+                if delta is not None and delta > tolerance:
+                    moving.append("pixels")
+            if moving:
+                last_change = time.time()
+                last_moving = "+".join(moving)
+        previous = current
+        now = time.time()
+        waited_ms = int((now - started) * 1000)
+        pixel_signal = "ok" if current["pixel_state"] == "ok" else _CUA_PIXEL_UNAVAILABLE
+        base = {"samples": samples, "waited_ms": waited_ms, "last_moving_signal": last_moving,
+                "pixel_signal": pixel_signal, "pixel_tolerance": tolerance,
+                "revision": current["revision"], "frame_id": current["frame_id"],
+                "pixel_id": current["pixel_id"]}
+        if samples >= 2 and (now - last_change) * 1000 >= stable_ms:
+            base["settled"] = True
+            if pixel_signal != "ok":
+                base["caveat"] = ("the pixel signal was unavailable, so this settled on the element "
+                                  "tree alone - an animated window can still be moving")
+            base["_observation"] = final
+            return base
+        if waited_ms >= timeout_ms:
+            base["settled"] = False
+            base["reason"] = "still moving after {} ms (last moving signal: {})".format(waited_ms, last_moving)
+            base["_observation"] = final
+            return base
+        time.sleep(max(1, interval_ms) / 1000.0)
+
+
+@mcp.tool()
+def desktop_observe(title_substring: str, depth: int = 6, max_items: int = 400,
+                    include_items: bool = False) -> str:
+    """Read one observation of a window: element count, content revision, pixel evidence.
+    revision answers "did the structure change". frame_id is the tolerant pixel identity and
+    is what you pass back as screenshot_id to bind an action to this frame; pixel_id is the
+    exact byte hash (a blinking caret changes it, so it decides nothing on its own).
+    None of them says WHAT the content is - read text for that. Also stores the observation
+    as the baseline for desktop_diff_window."""
+    observation = _cua_observe(title_substring, depth, max_items)
+    if not observation.get("ok"):
+        return json.dumps({"ok": False, "reason": observation.get("reason")}, ensure_ascii=False)
+    _CUA_LAST[observation["hwnd"]] = observation
+    payload = {"ok": True, "window": observation["window"], "elements": observation["elements"],
+               "revision": observation["revision"], "frame_id": observation["frame_id"],
+               "pixel_id": observation["pixel_id"], "pixel_state": observation["pixel_state"],
+               "note": "revision = structure changed; frame_id = tolerant pixel identity "
+                       "(use as screenshot_id); pixel_id = exact bytes"}
+    if observation["pixel_state"] != "ok":
+        payload["caveat"] = "the pixel signal is unavailable here; only the element tree is evidence"
+    if include_items:
+        payload["items"] = observation["items"][:max_items]
+    return json.dumps(payload, ensure_ascii=False)
+
+
+@mcp.tool()
+def desktop_diff_window(title_substring: str, depth: int = 6, max_items: int = 400) -> str:
+    """What changed since the previous observation of this window: structural diff (role+name+
+    rounded rect), text diff, and the pixel delta. Order alone is not a change; element
+    identity, not index."""
+    observation = _cua_observe(title_substring, depth, max_items)
+    if not observation.get("ok"):
+        return json.dumps({"ok": False, "reason": observation.get("reason")}, ensure_ascii=False)
+    hwnd = observation["hwnd"]
+    previous = _CUA_LAST.get(hwnd)
+    if previous is None:
+        _CUA_LAST[hwnd] = observation
+        return json.dumps({"ok": False, "reason": "no previous observation of this window; "
+                                                  "this call is now the baseline, ask again after the action"},
+                          ensure_ascii=False)
+    before_elements = _Counter(_cua_fingerprint(item) for item in previous["items"])
+    after_elements = _Counter(_cua_fingerprint(item) for item in observation["items"])
+    before_text = _Counter(previous["lines"])
+    after_text = _Counter(observation["lines"])
+    elements_added = list((after_elements - before_elements).elements())
+    elements_removed = list((before_elements - after_elements).elements())
+    text_added = list((after_text - before_text).elements())
+    text_removed = list((before_text - after_text).elements())
+    delta = _cua_pixel_delta(previous.get("cells"), observation.get("cells"))
+    _CUA_LAST[hwnd] = observation
+    return json.dumps({
+        "ok": True,
+        "window": observation["window"],
+        "changed": bool(elements_added or elements_removed),
+        "structure": {"added": len(elements_added), "removed": len(elements_removed),
+                      "elements_before": previous["elements"], "elements_after": observation["elements"]},
+        "elements": {"added": elements_added[:8], "removed": elements_removed[:8]},
+        "text": {"added": text_added[:8], "removed": text_removed[:8]},
+        "revision": {"before": previous["revision"], "after": observation["revision"]},
+        "pixels": {"delta": delta, "frame_before": previous["frame_id"],
+                   "frame_after": observation["frame_id"],
+                   "state": observation["pixel_state"]},
+    }, ensure_ascii=False)
+
+
+@mcp.tool()
+def desktop_wait_stable(title_substring: str, stable_ms: int = 400, timeout_ms: int = 6000,
+                        interval_ms: int = 150, tolerance: float = 0.0,
+                        depth: int = 6, max_items: int = 400) -> str:
+    """Wait for MEASURED quiescence instead of a fixed sleep: the element tree and the coarse
+    pixel signature must both stop moving. Reports sample count, which signal moved last, and
+    the pixel tolerance used; says so when it could not settle (never pretends it waited).
+    tolerance<=0 uses the module default."""
+    result = _cua_wait_stable(title_substring, max(0, stable_ms), max(0, timeout_ms),
+                              max(1, interval_ms), depth, max_items,
+                              tolerance if tolerance > 0 else None)
+    result.pop("_observation", None)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
+def desktop_click_verified(x: int, y: int, title_substring: str = "", expect_text: str = "",
+                           screenshot_id: str = "", button: str = "left", clicks: int = 1,
+                           stable_ms: int = 400, timeout_ms: int = 6000) -> str:
+    """Click with a typed verdict. ok (delivered) is NOT verified (effect observed).
+    expect_text must be ABSENT before and PRESENT after - that incremental criterion is the
+    only thing that turns a click into evidence; an expectation already on screen is rejected
+    as invalid rather than counted as a pass. screenshot_id binds the coordinates to the frame
+    they were read from (use frame_id from desktop_observe; the exact pixel_id is accepted
+    too): a different frame is refused and nothing is delivered. Concurrent agent sessions are
+    refused via a per-window lease."""
+    if not title_substring:
+        delivered = desktop_click(x, y, button, clicks)
+        return json.dumps({"ok": True, "verified": False, "effect": "unverifiable",
+                           "verification_required": True, "delivered": delivered,
+                           "reason": "no window was named, so nothing could be observed; "
+                                     "re-observe before retrying, do not blind-retry"},
+                          ensure_ascii=False)
+    before = _cua_observe(title_substring)
+    if not before.get("ok"):
+        return json.dumps({"ok": False, "effect": "not-delivered", "verification_required": True,
+                           "reason": "the target window could not be observed: " + str(before.get("reason"))},
+                          ensure_ascii=False)
+    hwnd = before["hwnd"]
+    if screenshot_id:
+        if before["pixel_state"] != "ok":
+            return json.dumps({"ok": False, "effect": "not-delivered", "verification_required": True,
+                               "reason": "a screenshot_id was supplied but the pixel signal is unavailable, "
+                                         "so the binding cannot be checked; refusing rather than assuming"},
+                              ensure_ascii=False)
+        if screenshot_id not in (before["frame_id"], before["pixel_id"]):
+            return json.dumps({"ok": False, "effect": "not-delivered", "stale_capture": True,
+                               "verification_required": True,
+                               "reason": "screenshot_id {} is not this frame (frame_id now {}, "
+                                         "pixel_id now {}); re-observe and re-read the coordinates".format(
+                                             _cua_clip(screenshot_id, 24), before["frame_id"],
+                                             _cua_clip(before["pixel_id"], 16))},
+                              ensure_ascii=False)
+    cua_lease = _cua_lease_acquire(hwnd)
+    if not cua_lease.get("ok"):
+        return json.dumps({"ok": False, "effect": "not-delivered", "busy": True,
+                           "contended": bool(cua_lease.get("contended")),
+                           "holder": cua_lease.get("holder"),
+                           "reason": cua_lease.get("reason"), "verification_required": True},
+                          ensure_ascii=False)
+    try:
+        had_expect_before = _cua_contains(before, expect_text)
+        delivered = desktop_click(x, y, button, clicks)
+        stable = _cua_wait_stable(title_substring, max(0, stable_ms), max(0, timeout_ms), 150)
+        after = stable.pop("_observation", None) or _cua_observe(title_substring)
+        appeared = _cua_contains(after, expect_text) if expect_text else False
+        if not expect_text:
+            effect, verified = "unverifiable", False
+            reason = "no expect_text was declared, so delivery cannot be judged; re-observe instead of retrying"
+        elif had_expect_before:
+            effect, verified = "invalid-expectation", False
+            reason = ('"{}" was already present before the action, so it is not evidence; '
+                      "pick a string that only appears afterwards".format(_cua_clip(expect_text, 60)))
+        elif appeared:
+            effect, verified = "verified", True
+            reason = '"{}" newly appeared'.format(_cua_clip(expect_text, 60))
+        else:
+            effect, verified = "not-met", False
+            reason = ('"{}" did not newly appear; the click may have missed (coordinates are '
+                      "window-local?) or the window did not repaint in time".format(_cua_clip(expect_text, 60)))
+        return json.dumps({
+            "ok": True, "verified": verified, "effect": effect,
+            "verification_required": not verified, "delivered": delivered,
+            "settled": stable.get("settled"), "samples": stable.get("samples"),
+            "waited_ms": stable.get("waited_ms"), "last_moving_signal": stable.get("last_moving_signal"),
+            "pixel_signal": stable.get("pixel_signal"),
+            "revision": {"before": before["revision"], "after": after.get("revision")},
+            "elements": {"before": before["elements"], "after": after.get("elements")},
+            "reason": reason,
+        }, ensure_ascii=False)
+    finally:
+        _cua_lease_release(hwnd)
+
+
+@mcp.tool()
+def desktop_type_verified(text: str, title_substring: str = "", control_name: str = "",
+                          expect_text: str = "", stable_ms: int = 300,
+                          timeout_ms: int = 5000) -> str:
+    """Type text and report success ONLY when a readback channel can show it landed.
+    Channels are tried in order: ValuePattern, TextPattern, then the element tree. When no
+    channel can read the text the verdict is `unverifiable` - never `not-met` and never a
+    pass. A literal miss is retried once as a whitespace-normalized match; the input is never
+    sent twice (that would duplicate it)."""
+    if not text:
+        return json.dumps({"ok": False, "reason": "nothing to type"}, ensure_ascii=False)
+    expectation = expect_text or text
+    before_source, before_text = _cua_read_text(title_substring, control_name) if title_substring else (None, None)
+    before_observed = _cua_observe(title_substring) if title_substring else None
+    hwnd = before_observed["hwnd"] if (before_observed and before_observed.get("ok")) else None
+    cua_lease = _cua_lease_acquire(hwnd) if hwnd is not None else {"ok": True}
+    if not cua_lease.get("ok"):
+        return json.dumps({"ok": False, "effect": "not-delivered", "busy": True,
+                           "contended": bool(cua_lease.get("contended")),
+                           "holder": cua_lease.get("holder"), "reason": cua_lease.get("reason"),
+                           "verification_required": True}, ensure_ascii=False)
+    try:
+        delivered = desktop_type(text)
+        stable = _cua_wait_stable(title_substring, max(0, stable_ms), max(0, timeout_ms), 150) \
+            if title_substring else {"settled": None, "samples": 0}
+        after_observed = stable.pop("_observation", None) or (
+            _cua_observe(title_substring) if title_substring else None)
+        readback_source, readback = _cua_read_text(title_substring, control_name) if title_substring else (None, None)
+        if readback is None and after_observed and after_observed.get("ok"):
+            readback_source, readback = "element tree", "\n".join(after_observed["lines"])
+        match = "none"
+        if readback is not None:
+            if expectation in str(readback):
+                match = "literal"
+            elif " ".join(expectation.split()) in " ".join(str(readback).split()):
+                match = "whitespace-normalized"
+        already_present = False
+        if before_text is not None and expectation in str(before_text):
+            already_present = True
+        elif before_observed and before_observed.get("ok") and _cua_contains(before_observed, expectation):
+            already_present = True
+        if readback is None:
+            effect, verified = "unverifiable", False
+            reason = ("no readback channel could read this control (ValuePattern, TextPattern and "
+                      "the element tree were all empty); re-observe before retrying")
+        elif already_present:
+            effect, verified = "invalid-expectation", False
+            reason = ('"{}" was already in the readback before typing, so it cannot be evidence; '
+                      "name the control and the expected value explicitly".format(_cua_clip(expectation, 60)))
+        elif match != "none":
+            effect, verified = "verified", True
+            reason = "readback matched ({}) via {}".format(match, readback_source)
+        else:
+            effect, verified = "not-met", False
+            reason = "the typed text did not appear in the readback; do NOT retype blindly - re-observe first"
+        return json.dumps({
+            "ok": True, "verified": verified, "effect": effect,
+            "verification_required": not verified, "delivered": delivered,
+            "readback_source": readback_source,
+            "readback": _cua_clip(readback, 200) if readback is not None else None,
+            "settled": stable.get("settled"), "samples": stable.get("samples"),
+            "pixel_signal": stable.get("pixel_signal"),
+            "reason": reason,
+        }, ensure_ascii=False)
+    finally:
+        if hwnd is not None:
+            _cua_lease_release(hwnd)
+
+
+@mcp.tool()
+def desktop_lease_status() -> str:
+    """List computer-use window leases: who holds each target window and for how long.
+    Empty means no other session of our own agents is driving a window right now."""
+    entries = []
+    try:
+        names = sorted(os.listdir(_CUA_LEASE_DIR))
+    except FileNotFoundError:
+        names = []
+    except OSError as exc:  # noqa: BLE001
+        return json.dumps({"ok": False, "reason": _cua_clip(exc, 120)}, ensure_ascii=False)
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(_CUA_LEASE_DIR, name)
+        try:
+            with open(path, encoding="utf-8") as lease_file:
+                held = json.load(lease_file)
+            age = time.time() - float(held.get("at") or 0.0)
+            entries.append({"key": held.get("key") or name[:-5], "holder": held.get("owner"),
+                            "held_for_s": round(age, 1), "expired": age > _CUA_LEASE_TTL})
+        except Exception as exc:  # noqa: BLE001
+            entries.append({"key": name[:-5], "unreadable": _cua_clip(exc, 80)})
+    return json.dumps({"ok": True, "lease_dir": _CUA_LEASE_DIR, "ttl_s": _CUA_LEASE_TTL,
+                       "count": len(entries), "leases": entries}, ensure_ascii=False)
+# ───────────────────── end computer-use contract layer (c021) ─────────────────────
+
+
+
+
+# ─────────────────── computer-use first-contact probe (c022) ───────────────────
+# Route an app you have never driven before. Three probes, cheapest first, READ-ONLY by
+# default; steps 2 and 3 need an explicit confirmation and are undone afterwards.
+# The rule the source kit learned the hard way is kept: the verdict depends on the element
+# you pick, so the element is named by the caller, never auto-chosen.
+#
+# Windows routes (not the macOS ones):
+#   uia-name   tree readable and a click moves the content -> address controls by UIA name,
+#              window-local pixels as the fallback
+#   keyboard   tree readable but the click is inert -> drive by keyboard and verify by readback
+#   dom        no tree, or a Chromium/Electron surface that ignores synthetic input ->
+#              drive the renderer through Playwright, verify by DOM text
+#   vision     no tree and no input evidence -> pixels only: capture, click, verify by delta
+
+_CUA_CHROMIUM_EXES = {
+    "chrome.exe", "msedge.exe", "brave.exe", "opera.exe", "vivaldi.exe",
+    "chromium.exe", "thorium.exe", "arc.exe", "yandex.exe",
+}
+_CUA_ELECTRON_MARKERS = ("resources\\app.asar", "libegl.dll", "v8_context_snapshot.bin", "icudtl.dat")
+_CUA_CHROMIUM_MARKERS = ("chrome_100_percent.pak", "chrome_200_percent.pak", "chrome_elf.dll")
+
+
+def _cua_window_pid(hwnd):
+    pid = wt.DWORD()
+    try:
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return int(pid.value)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _cua_process_exe(pid):
+    """Full image path of a pid, or None. Evidence, not a guess from the window title."""
+    if not pid:
+        return None
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.restype = wt.HANDLE
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        size = wt.DWORD(2048)
+        buffer = ctypes.create_unicode_buffer(2048)
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+            return buffer.value
+        return None
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _cua_app_profile(hwnd):
+    """Classify an app from evidence its own files carry - never from its name."""
+    pid = _cua_window_pid(hwnd)
+    exe = _cua_process_exe(pid)
+    evidence = []
+    exe_name = ""
+    if exe:
+        exe_name = os.path.basename(exe).lower()
+        evidence.append("process image {}".format(os.path.basename(exe)))
+    directory = os.path.dirname(exe) if exe else ""
+    lowered = directory.lower()
+    has_electron = False
+    has_chromium_files = False
+    if directory:
+        for marker in _CUA_ELECTRON_MARKERS:
+            if os.path.exists(os.path.join(directory, marker)):
+                has_electron = True
+                evidence.append("ships {}".format(marker))
+                break
+        for marker in _CUA_CHROMIUM_MARKERS:
+            if os.path.exists(os.path.join(directory, marker)):
+                has_chromium_files = True
+                evidence.append("ships {}".format(marker))
+                break
+    is_chromium_exe = exe_name in _CUA_CHROMIUM_EXES
+    if is_chromium_exe:
+        evidence.append("{} is a Chromium-family browser".format(exe_name))
+    if "\\windowsapps\\" in lowered:
+        evidence.append("packaged app (WindowsApps)")
+    if not exe:
+        evidence.append("the process image could not be queried")
+    return {
+        "pid": pid,
+        "exe": exe,
+        "exe_name": exe_name,
+        "is_chromium_browser": is_chromium_exe,
+        "ships_electron": has_electron,
+        "ships_chromium_files": has_chromium_files,
+        "chromium_surface": is_chromium_exe or has_electron or has_chromium_files,
+        "evidence": evidence,
+    }
+
+
+def _cua_route_verdict(tree_readable, click_changed, key_landed, chromium):
+    """Pick an input route from evidence. Never invents a verdict it has not probed."""
+    if tree_readable and click_changed is True:
+        return {"route": "uia-name", "confidence": "high",
+                "reason": "the tree is readable and a click moved the content",
+                "next": "address controls by UIA name, fall back to window-local pixel coordinates"}
+    if tree_readable and click_changed is False and chromium:
+        return {"route": "dom", "confidence": "high",
+                "reason": "the tree is readable but a synthetic click did not move a Chromium surface",
+                "next": "drive the renderer through Playwright and verify by DOM text"}
+    if tree_readable and click_changed is False:
+        return {"route": "keyboard", "confidence": "low",
+                "reason": "the tree is readable but the click was inert; this control likely wants keyboard input",
+                "next": "use keyboard or a ValuePattern write, then verify by reading the value back"}
+    if not tree_readable and chromium:
+        return {"route": "dom", "confidence": "high",
+                "reason": "no readable accessibility tree on a Chromium/Electron surface",
+                "next": "drive it through Playwright, verify by DOM text"}
+    if not tree_readable and key_landed is True:
+        return {"route": "keyboard", "confidence": "low",
+                "reason": "no tree, but a keystroke landed",
+                "next": "drive it by keyboard and verify every step by reading text back"}
+    if not tree_readable:
+        return {"route": "vision", "confidence": "low",
+                "reason": "no tree and no input evidence: only pixels are left",
+                "next": "capture, read coordinates off the image, click, verify by pixel delta plus a text read"}
+    return {"route": "unknown", "confidence": "low",
+            "reason": "no click probe result yet, so no route can be justified",
+            "next": "re-run with confirm=True and element_name=<a representative element>"}
+
+
+@mcp.tool()
+def desktop_probe_app(title_substring: str, confirm: bool = False, element_name: str = "",
+                      control_type: str = "", key_probe: str = "~", depth: int = 6,
+                      max_items: int = 400) -> str:
+    """First-contact probe for an app you have never driven: read the tree, optionally click one
+    element you name, optionally type one probe character and undo it, then print a route card
+    (uia-name / keyboard / dom / vision) with the evidence behind it.
+
+    READ-ONLY unless confirm=True. Steps 2 and 3 need confirm=True, and the typed probe is
+    reverted and read back afterwards. Pass element_name yourself: the verdict depends on which
+    element you probe, so a probe on an unrepresentative element yields a correct-but-useless
+    answer.
+    """
+    observation = _cua_observe(title_substring, depth, max_items)
+    if not observation.get("ok"):
+        return json.dumps({"ok": False, "reason": observation.get("reason")}, ensure_ascii=False)
+    hwnd = observation["hwnd"]
+    profile = _cua_app_profile(hwnd)
+    tree_readable = observation["elements"] > 0
+
+    card = {
+        "ok": True,
+        "window": observation["window"],
+        "app": {"exe": profile["exe"], "chromium_surface": profile["chromium_surface"],
+                "is_chromium_browser": profile["is_chromium_browser"],
+                "ships_electron": profile["ships_electron"], "evidence": profile["evidence"]},
+        "step1_tree": {"readable": tree_readable, "elements": observation["elements"],
+                       "revision": observation["revision"], "pixel_signal": observation["pixel_state"]},
+        "step2_click": {"ran": False, "reason": "read-only unless confirm=True and element_name is given"},
+        "step3_key": {"ran": False, "reason": "read-only unless confirm=True"},
+    }
+
+    click_changed = None
+    key_landed = None
+
+    if confirm and element_name:
+        target = _uia({"action": "find", "title": title_substring, "name": element_name,
+                       "control_type": control_type})
+        try:
+            located = json.loads(target)
+        except Exception:  # noqa: BLE001
+            located = {"ok": False, "msg": "find reply was not JSON"}
+        if not located.get("ok"):
+            card["step2_click"] = {"ran": False, "reason": "element not found: " + str(located.get("msg"))}
+        else:
+            rect = [int(float(part)) for part in located["element"]["rect"].split(",")]
+            centre = (rect[0] + rect[2] // 2, rect[1] + rect[3] // 2)
+            before = observation
+            delivered = desktop_click(centre[0], centre[1])
+            settled = _cua_wait_stable(title_substring, 250, 3000, 150, depth, max_items)
+            after = settled.pop("_observation", None) or _cua_observe(title_substring, depth, max_items)
+            delta = _cua_pixel_delta(before.get("cells"), after.get("cells"))
+            click_changed = before["revision"] != after["revision"] or (delta is not None and delta > _CUA_PIXEL_TOLERANCE)
+            card["step2_click"] = {
+                "ran": True, "element": located["element"].get("name"), "at": centre,
+                "delivered": delivered, "changed": click_changed,
+                "revision": {"before": before["revision"], "after": after["revision"]},
+                "pixel_delta": delta, "settled": settled.get("settled"),
+                "caveat": "a change here can be a caret or selection move, not a value change",
+            }
+
+    if confirm:
+        control = None
+        for item in observation.get("items") or []:
+            types = (item.get("type") or "").lower()
+            if control_type and types != control_type.lower():
+                continue
+            if types in ("edit", "document", "textbox", "combobox") and item.get("name"):
+                control = item["name"]
+                break
+        if control is None:
+            card["step3_key"] = {"ran": False,
+                                 "reason": "no text-input control in the tree; a keystroke probe would land somewhere unobserved"}
+        else:
+            source_before, text_before = _cua_read_text(title_substring, control)
+            desktop_activate_window(title_substring)
+            time.sleep(0.3)
+            located = json.loads(_uia({"action": "find", "title": title_substring, "name": control,
+                                       "control_type": control_type}))
+            if located.get("ok"):
+                rect = [int(float(part)) for part in located["element"]["rect"].split(",")]
+                desktop_click(rect[0] + rect[2] // 2, rect[1] + rect[3] // 2)
+                time.sleep(0.2)
+            desktop_type(key_probe)
+            time.sleep(0.4)
+            source_after, text_after = _cua_read_text(title_substring, control)
+            key_landed = text_after is not None and text_before is not None and text_after != text_before
+            restored = None
+            if key_landed:
+                desktop_hotkey("ctrl+z")
+                time.sleep(0.4)
+                source_undo, text_undo = _cua_read_text(title_substring, control)
+                restored = text_undo is not None and text_undo == text_before
+                if not restored:
+                    desktop_key("backspace")  # second attempt: one probe char
+                    time.sleep(0.3)
+                    source_undo2, text_undo2 = _cua_read_text(title_substring, control)
+                    restored = text_undo2 is not None and text_undo2 == text_before
+            card["step3_key"] = {
+                "ran": True, "control": control, "probe": key_probe,
+                "readback_channel": source_after or source_before,
+                "before": _cua_clip(text_before, 60), "after": _cua_clip(text_after, 60),
+                "key_landed": key_landed, "restored": restored,
+                "warning": None if restored in (True, None) else "the probe character may remain in the control",
+            }
+
+    verdict = _cua_route_verdict(tree_readable, click_changed, key_landed, profile["chromium_surface"])
+    card["route"] = verdict
+    card["measure"] = "read-only: tree elements, pixel signature; steps 2/3 only with confirm=True"
+    return json.dumps(card, ensure_ascii=False, indent=2)
+# ──────────────── end computer-use first-contact probe (c022) ────────────────
 
 
 if __name__ == "__main__":

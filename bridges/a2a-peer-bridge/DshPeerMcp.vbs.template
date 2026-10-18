@@ -1,4 +1,16 @@
 # DshPeerMcp.vbs 模板 — 隐藏启动 peer-mcp-server.mjs（放 Windows Startup）
-' 替换 <NODE> 与 <KIT> 为实际绝对路径后保存为 DshPeerMcp.vbs'
+' 替换 <NODE> / <KIT> / <PEER_HOSTNAME> 为实际值后保存为 DshPeerMcp.vbs'
+'
+' ⚠️ DSH_PEER_BIND 保持 127.0.0.1（回环）——**不要**改成本机 tailnet IP。
+'    本服务暴露的 run_task 是**全权限**执行面：绑到 tailnet 等于把它开放给同网所有主机
+'    （仅有静态 Bearer 一道门）。正确做法是保持回环 + 由调用方自建 SSH 隧道，例如：
+'      ssh -N -L 127.0.0.1:39490:127.0.0.1:39480 <user>@<pc-tailnet-ip>
+'    这样既能互通，又不加宽 PC 侧暴露面。
+'    写死该变量只为把意图显式化：peer-mcp-server.mjs 的默认值本就是 127.0.0.1，
+'    显式声明可避免日后被误改宽。
+'    2026-09-20 教训：把该变量设成 tailnet IP 会**打断对端既有的 SSH 隧道**
+'    （隧道转发目标是 PC 的 127.0.0.1:39480，绑走之后隧道就变成"能连上但无响应"）。
 Set sh = CreateObject("WScript.Shell")
+sh.Environment("PROCESS")("DSH_PEER_BIND") = "127.0.0.1"
+sh.Environment("PROCESS")("DSH_PEER_HOSTNAME") = "<PEER_HOSTNAME>"
 sh.Run """<NODE>"" ""<KIT>\bridges\a2a-peer-bridge\peer-mcp-server.mjs""", 0, False
