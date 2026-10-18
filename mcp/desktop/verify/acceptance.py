@@ -255,9 +255,26 @@ def main():
               "route={} changed={}".format(clicked["route"]["route"],
                                            clicked["step2_click"]["changed"]))
 
-        chrome = next((title for title in titles() if "Google Chrome" in title), None)
+        def chromium_browser_window():
+            """Select the target by an INDEPENDENT signal: the owning process image is a Chromium
+            browser. Selecting by window title skipped here for weeks - the only Chromium window
+            open was a `chrome --app` window titled "... - DeepSeek Harness" - and selecting with
+            probe_app's own classifier would let a broken classifier fail open into SKIP."""
+            chromium_exes = {"chrome.exe", "msedge.exe", "brave.exe", "opera.exe",
+                             "vivaldi.exe", "chromium.exe"}
+            for title in titles():
+                found = d._find_window(title)
+                if not found:
+                    continue
+                exe = d._cua_process_exe(d._cua_window_pid(found[0])) or ""
+                if os.path.basename(exe).lower() in chromium_exes:
+                    return title
+            return None
+
+        chrome = chromium_browser_window()
         if chrome is None:
-            skip("probe_app classifies a Chromium surface from evidence", "no Chrome window open")
+            skip("probe_app classifies a Chromium surface from evidence",
+                 "no window is owned by a Chromium-family browser process")
         else:
             chrome_card = json.loads(d.desktop_probe_app(chrome))
             check("probe_app classifies a Chromium surface from evidence",

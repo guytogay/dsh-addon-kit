@@ -1,5 +1,5 @@
 # dsh-addon-kit manifest — 机器可读制品清单
-kit_version: 1.2.0
+kit_version: 1.2.1
 generated: 2026-09-03
 source_audit: ../DSH-自定义审计-2026-09-03.md
 secrets_included: false
@@ -30,7 +30,7 @@ artifacts:
     tools: 25
     dsh_install: install.ps1 + cordis-patch.yaml；verify/acceptance.py 可重跑验收（含动画窗口对照），verify/in_host_check.py 走 MCP 协议验真实工具面
     cross_agent: any MCP stdio client
-    version: 1.2.0
+    version: 1.2.1
 
   - id: playwright-browsers-mcp
     kind: mcp-server
