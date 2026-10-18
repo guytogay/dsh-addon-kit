@@ -86,12 +86,14 @@ artifacts:
     version: 1.7.0
 
   - id: computer-use-cua-driver-native
-    kind: plugin
+    kind: index
     dir: plugins/computer-use-cua-driver-native
-    desc: macOS 桌面执行层（DSH 插件，Cua Driver SDK）：首次接入探针 probe_app / 路由判定 / 网格静止判据（实测阈值：转圈 0.30%、光标 0.0145%）/ 窗口租约 / CDP 助手
+    desc: 索引条目（源码不在本仓）：macOS 桌面执行层（DSH 插件，Cua Driver SDK）——首次接入探针 probe_app / 路由判定 / 网格静止判据（实测：转圈 0.30%、光标 0.0145%）/ 窗口租约 / CDP 助手
+    source_repo: https://github.com/guytogay/computer-use-upgrade
+    source_dir: plugins/dsh-computer-use
     runtime: node>=24 + @trycua/cua-driver 0.28.x (darwin-arm64)
-    dsh_install: 覆盖 packages/experimental/computer-use-cua-driver-native 并在 profile 里加载该包；npx vitest run 81 项通过
-    cross_agent: 免插件等价物见 guytogay/computer-use-upgrade（mcp/probe-server.mjs 独立 MCP server + verify/probe-app.mjs）
+    dsh_install: 从 source_repo 取 plugins/dsh-computer-use/ 覆盖 packages/experimental/computer-use-cua-driver-native；81 项单测
+    cross_agent: 免插件等价物见 source_repo 的 mcp/probe-server.mjs 与 verify/probe-app.mjs
     version: 0.1.0
 
   - id: mobile-remote
