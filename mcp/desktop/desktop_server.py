@@ -646,6 +646,82 @@ def _cua_lease_path(key):
     return os.path.join(_CUA_LEASE_DIR, safe + ".json")
 
 
+_CUA_MUTEX_PREFIX = os.environ.get("DSH_CUA_MUTEX_PREFIX") or "Global\\DSH-CUA-win-"
+_WAIT_OBJECT_0 = 0x00000000
+_WAIT_ABANDONED = 0x00000080
+_WAIT_TIMEOUT = 0x00000102
+_kernel32 = ctypes.windll.kernel32
+_kernel32.CreateMutexW.restype = wt.HANDLE
+_kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wt.BOOL, wt.LPCWSTR]
+_kernel32.WaitForSingleObject.argtypes = [wt.HANDLE, wt.DWORD]
+_kernel32.WaitForSingleObject.restype = wt.DWORD
+_kernel32.ReleaseMutex.argtypes = [wt.HANDLE]
+_kernel32.ReleaseMutex.restype = wt.BOOL
+
+
+def _cua_mutex_name(hwnd):
+    return "{}{}".format(_CUA_MUTEX_PREFIX, int(hwnd))
+
+
+def _cua_mutex_acquire(hwnd):
+    """Kernel-enforced exclusion on one window. Identity plays no part: holding the mutex is the
+    right to act, and the kernel releases it when the holder dies - so a crashed holder is taken
+    over immediately (WAIT_ABANDONED) instead of blocking everyone until a TTL expires."""
+    name = _cua_mutex_name(hwnd)
+    handle = _kernel32.CreateMutexW(None, False, name)
+    if not handle:
+        return {"ok": False, "reason": "CreateMutex failed (error {})".format(ctypes.GetLastError())}
+    waited = _kernel32.WaitForSingleObject(handle, 0)
+    if waited in (_WAIT_OBJECT_0, _WAIT_ABANDONED):
+        return {"ok": True, "handle": int(handle), "name": name,
+                "took_over_abandoned": waited == _WAIT_ABANDONED}
+    _kernel32.CloseHandle(handle)
+    if waited == _WAIT_TIMEOUT:
+        return {"ok": False, "busy": True, "contended": True, "name": name,
+                "reason": "another process holds this window (kernel mutex {}); nothing was delivered".format(name)}
+    return {"ok": False, "reason": "WaitForSingleObject returned 0x{:X}".format(waited)}
+
+
+def _cua_mutex_release(handle):
+    if not handle:
+        return True
+    try:
+        _kernel32.ReleaseMutex(wt.HANDLE(handle))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        try:
+            _kernel32.CloseHandle(wt.HANDLE(handle))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _cua_label_owner(session_tag=""):
+    return session_tag or os.environ.get("DSH_SESSION_ID") or "pid:{}".format(os.getpid())
+
+
+def _cua_label_write(hwnd, session_tag=""):
+    """A best-effort note of who is acting. It is never consulted for exclusion."""
+    try:
+        os.makedirs(_CUA_LEASE_DIR, exist_ok=True)
+        payload = {"key": _cua_lease_key(hwnd), "hwnd": int(hwnd),
+                   "label": _cua_label_owner(session_tag), "pid": os.getpid(), "at": time.time()}
+        with open(_cua_lease_path(_cua_lease_key(hwnd)), "w", encoding="utf-8") as label_file:
+            json.dump(payload, label_file)
+        return True
+    except OSError:
+        return False
+
+
+def _cua_label_remove(hwnd):
+    try:
+        os.remove(_cua_lease_path(_cua_lease_key(hwnd)))
+        return True
+    except OSError:
+        return True
+
+
 def _cua_lease_acquire(hwnd):
     """One-sided defence: our own agent sessions honour the lease; nothing can force another
     vendor's agent to. It is politeness inside this host, not a mutex."""
@@ -880,14 +956,16 @@ def desktop_wait_stable(title_substring: str, stable_ms: int = 400, timeout_ms: 
 @mcp.tool()
 def desktop_click_verified(x: int, y: int, title_substring: str = "", expect_text: str = "",
                            screenshot_id: str = "", button: str = "left", clicks: int = 1,
-                           stable_ms: int = 400, timeout_ms: int = 6000) -> str:
+                           stable_ms: int = 400, timeout_ms: int = 6000,
+                           session_tag: str = "") -> str:
     """Click with a typed verdict. ok (delivered) is NOT verified (effect observed).
     expect_text must be ABSENT before and PRESENT after - that incremental criterion is the
     only thing that turns a click into evidence; an expectation already on screen is rejected
     as invalid rather than counted as a pass. screenshot_id binds the coordinates to the frame
     they were read from (use frame_id from desktop_observe; the exact pixel_id is accepted
-    too): a different frame is refused and nothing is delivered. Concurrent agent sessions are
-    refused via a per-window lease."""
+    too): a different frame is refused and nothing is delivered. Exclusion is a KERNEL named
+    mutex on the window, so a second process - of any session - is refused; session_tag is only a
+    label for the record and never decides."""
     if not title_substring:
         delivered = desktop_click(x, y, button, clicks)
         return json.dumps({"ok": True, "verified": False, "effect": "unverifiable",
@@ -915,13 +993,13 @@ def desktop_click_verified(x: int, y: int, title_substring: str = "", expect_tex
                                              _cua_clip(screenshot_id, 24), before["frame_id"],
                                              _cua_clip(before["pixel_id"], 16))},
                               ensure_ascii=False)
-    cua_lease = _cua_lease_acquire(hwnd)
-    if not cua_lease.get("ok"):
+    gate = _cua_mutex_acquire(hwnd)
+    if not gate.get("ok"):
         return json.dumps({"ok": False, "effect": "not-delivered", "busy": True,
-                           "contended": bool(cua_lease.get("contended")),
-                           "holder": cua_lease.get("holder"),
-                           "reason": cua_lease.get("reason"), "verification_required": True},
+                           "contended": bool(gate.get("contended")), "mutex": gate.get("name"),
+                           "reason": gate.get("reason"), "verification_required": True},
                           ensure_ascii=False)
+    _cua_label_write(hwnd, session_tag)
     try:
         had_expect_before = _cua_contains(before, expect_text)
         delivered = desktop_click(x, y, button, clicks)
@@ -957,16 +1035,18 @@ def desktop_click_verified(x: int, y: int, title_substring: str = "", expect_tex
             "elements": {"before": before["elements"], "after": after.get("elements")},
             "tree_readable": before["tree_readable"],
             "pixel_changed": before["frame_id"] != after.get("frame_id"),
+            "took_over_abandoned": gate.get("took_over_abandoned"),
             "reason": reason,
         }, ensure_ascii=False)
     finally:
-        _cua_lease_release(hwnd)
+        _cua_label_remove(hwnd)
+        _cua_mutex_release(gate.get("handle"))
 
 
 @mcp.tool()
 def desktop_type_verified(text: str, title_substring: str = "", control_name: str = "",
                           expect_text: str = "", stable_ms: int = 300,
-                          timeout_ms: int = 5000) -> str:
+                          timeout_ms: int = 5000, session_tag: str = "") -> str:
     """Type text and report success ONLY when a readback channel can show it landed.
     Channels are tried in order: ValuePattern, TextPattern, then the element tree. When no
     channel can read the text the verdict is `unverifiable` - never `not-met` and never a
@@ -978,12 +1058,16 @@ def desktop_type_verified(text: str, title_substring: str = "", control_name: st
     before_source, before_text = _cua_read_text(title_substring, control_name) if title_substring else (None, None)
     before_observed = _cua_observe(title_substring) if title_substring else None
     hwnd = before_observed["hwnd"] if (before_observed and before_observed.get("ok")) else None
-    cua_lease = _cua_lease_acquire(hwnd) if hwnd is not None else {"ok": True}
-    if not cua_lease.get("ok"):
-        return json.dumps({"ok": False, "effect": "not-delivered", "busy": True,
-                           "contended": bool(cua_lease.get("contended")),
-                           "holder": cua_lease.get("holder"), "reason": cua_lease.get("reason"),
-                           "verification_required": True}, ensure_ascii=False)
+    if hwnd is None:
+        gate = {"ok": True, "handle": 0}
+    else:
+        gate = _cua_mutex_acquire(hwnd)
+        if not gate.get("ok"):
+            return json.dumps({"ok": False, "effect": "not-delivered", "busy": True,
+                               "contended": bool(gate.get("contended")), "mutex": gate.get("name"),
+                               "reason": gate.get("reason"), "verification_required": True},
+                              ensure_ascii=False)
+        _cua_label_write(hwnd, session_tag)
     try:
         delivered = desktop_type(text)
         stable = _cua_wait_stable(title_substring, max(0, stable_ms), max(0, timeout_ms), 150) \
@@ -1030,13 +1114,15 @@ def desktop_type_verified(text: str, title_substring: str = "", control_name: st
         }, ensure_ascii=False)
     finally:
         if hwnd is not None:
-            _cua_lease_release(hwnd)
+            _cua_label_remove(hwnd)
+            _cua_mutex_release(gate.get("handle"))
 
 
 @mcp.tool()
 def desktop_lease_status() -> str:
-    """List computer-use window leases: who holds each target window and for how long.
-    Empty means no other session of our own agents is driving a window right now."""
+    """Who is driving which window. Exclusion itself is a KERNEL named mutex, so this view has two
+    parts per window: the label the holder wrote, and a non-blocking probe of the mutex. A label
+    whose mutex is free is reported as `stale_label` - the mutex decides, never the file."""
     entries = []
     try:
         names = sorted(os.listdir(_CUA_LEASE_DIR))
@@ -1049,14 +1135,26 @@ def desktop_lease_status() -> str:
             continue
         path = os.path.join(_CUA_LEASE_DIR, name)
         try:
-            with open(path, encoding="utf-8") as lease_file:
-                held = json.load(lease_file)
-            age = time.time() - float(held.get("at") or 0.0)
-            entries.append({"key": held.get("key") or name[:-5], "holder": held.get("owner"),
-                            "held_for_s": round(age, 1), "expired": age > _CUA_LEASE_TTL})
+            with open(path, encoding="utf-8") as label_file:
+                label = json.load(label_file)
         except Exception as exc:  # noqa: BLE001
             entries.append({"key": name[:-5], "unreadable": _cua_clip(exc, 80)})
-    return json.dumps({"ok": True, "lease_dir": _CUA_LEASE_DIR, "ttl_s": _CUA_LEASE_TTL,
+            continue
+        hwnd = label.get("hwnd")
+        held = None
+        if isinstance(hwnd, int):
+            probe = _cua_mutex_acquire(hwnd)
+            if probe.get("ok"):
+                held = False
+                _cua_mutex_release(probe.get("handle"))
+            else:
+                held = bool(probe.get("busy"))
+        entries.append({"key": label.get("key") or name[:-5],
+                        "label": label.get("label"), "pid": label.get("pid"),
+                        "held_for_s": round(time.time() - float(label.get("at") or 0.0), 1),
+                        "held": held, "stale_label": held is False})
+    return json.dumps({"ok": True, "mechanism": "kernel named mutex",
+                       "mutex_prefix": _CUA_MUTEX_PREFIX, "label_dir": _CUA_LEASE_DIR,
                        "count": len(entries), "leases": entries}, ensure_ascii=False)
 # ───────────────────── end computer-use contract layer (c021) ─────────────────────
 

@@ -101,9 +101,12 @@ ok: true, verified: false, effect: "unverifiable", verification_required: true
 定位元素时按返回图片尺寸与真实窗口 rect 换算，别拿截图坐标直接当屏幕坐标用（窗口不在 (0,0) 时必错）。
 
 ## D. 并发（这台机器会有别的会话）
-- 每个窗口一把**租约**：`~/.dsh/computer-use/leases/`（`DSH_CUA_LEASE_DIR` 可覆盖），30s 过期，
-  按窗口而不是整机。
-- 租约只管**我们自己的**会话；别人家的 agent 不会写它 → 它是礼貌，不是互斥锁。
+- 每个窗口一把**内核命名互斥量**：`Global\DSH-CUA-win-<hwnd>`（`DSH_CUA_MUTEX_PREFIX` 可覆盖）。
+  **判据在内核**，不看"你是谁"：持有即有权动作；持有者进程死掉，内核立刻放行（不需要等 TTL）。
+- `~/.dsh/computer-use/leases/` 里的文件现在只是**标签**（谁在动），**从不参与裁决**。
+  `desktop_lease_status` 会同时报标签和内核探测结果：**标签还在但互斥量已空 = `stale_label`**，以后者为准。
+- `session_tag` 参数只是标签（默认回落 `DSH_SESSION_ID` → pid），不传也不影响互斥。
+- 互斥量管得住**调用我们这套工具的进程**；别人家的 agent 不调用就不受约束 → 仍然要配合下面的观测信号。
 - 别的信号：目标窗口的 revision 在你没动它时也变了、前台应用在两次观察之间被换掉 → 判 `contended`，
   **放弃、不要重试**。
 - 避开全局资源：剪贴板、前台焦点、全局热键是整机共享的。
@@ -116,7 +119,7 @@ ok: true, verified: false, effect: "unverifiable", verification_required: true
 | 等窗口静止（双信号、≥2 采样） | `desktop_wait_stable` |
 | 点击 + 三态裁决 | `desktop_click_verified(expect_text=..., screenshot_id=<frame_id>)` |
 | 输入 + 回读裁决 | `desktop_type_verified(control_name=..., expect_text=...)` |
-| 谁占着窗口 | `desktop_lease_status` |
+| 谁占着窗口（标签 + 内核探测） | `desktop_lease_status` |
 | 首次接入未知 app | `desktop_probe_app`（见 §G） |
 
 ⚠️ **这些工具在驱动重启后才出现在工具列表里**。看不到它们时不要假设它们存在——退回手工纪律：

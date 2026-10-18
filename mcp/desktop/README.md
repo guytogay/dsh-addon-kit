@@ -79,7 +79,12 @@ python verify/in_host_check.py --server <驱动目录>/desktop_server.py --json 
   实测精确哈希会被光标闪烁/桌面覆盖层打破（静窗 9 次采样 6.3 s 仍报在动），粗签名 2 次采样 1.1 s 收敛。
 - **回读按通道分级**：ValuePattern → TextPattern → 元素树；三者都读不到时报 `unverifiable`，
   不能报 `not-met`（记事本的编辑器就是"读不到但确实写进去了"的例子）。
-- **租约是单边礼貌**：`open(...,'wx')` 原子创建、30 s 过期、按窗口而非整机；它约束不了别人家的 agent。
+- **互斥交给内核，不交给"自我介绍"**：每个窗口一把命名互斥量 `Global\DSH-CUA-win-<hwnd>`。
+  持有即有权动作，**不需要调用方报身份**；持有者进程死掉，内核立刻放行（无需等 TTL）。
+  `~/.dsh/computer-use/leases/` 里的文件降级为**标签**（谁在动），`desktop_lease_status` 同时报标签与
+  内核探测结果——标签还在而互斥量已空即 `stale_label`，以互斥量为准。
+  为什么换：文件租约靠调用方自述身份，同一个 MCP 服务进程服务多个会话时它们看起来是同一个持有者，
+  于是租约在会话之间形同虚设；互斥量不看身份，天然跨进程跨会话。它仍然约束不了不调用本工具的其他 agent。
 - **UIA 输出与窗口身份**：helper 强制 UTF-8 输出——否则在宿主内包含中文的回复会变成空输出（实测
   `desktop_observe("设置")` → `{"ok":false,"msg":"empty output"}`，同一调用在交互式 shell 里正常）；
   窗口解析先按 Win32 标题找 hwnd 再 `FromHandle`，因为打包应用的 UIA 名与标题栏不一致。

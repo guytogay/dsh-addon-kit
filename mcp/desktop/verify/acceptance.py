@@ -94,6 +94,17 @@ def main():
         user32.GetCursorPos(ctypes.byref(point))
         return point.x, point.y
 
+    def title_point(title):
+        """A neutral point on the window's title bar: clicking it focuses the window and changes no
+        application state. Needed because a case that clicks a real control leaves state behind -
+        a stray digit once turned the 7+8= case into 77+8."""
+        found = d._find_window(title)
+        if not found:
+            return None
+        rect = wt.RECT()
+        user32.GetWindowRect(found[0], ctypes.byref(rect))
+        return rect.left + 60, rect.top + 10
+
     def center_of(name, title, control_type="Button"):
         reply = json.loads(d._uia({"action": "find", "title": title, "name": name,
                                    "control_type": control_type}))
@@ -138,26 +149,57 @@ def main():
               stable.get("pixel_tolerance")))
 
     hwnd = first["hwnd"]
-    lease_path = d._cua_lease_path(d._cua_lease_key(hwnd))
-    os.makedirs(os.path.dirname(lease_path), exist_ok=True)
-    with open(lease_path, "w", encoding="utf-8") as lease_file:
-        json.dump({"key": d._cua_lease_key(hwnd), "owner": "acceptance-simulated-other",
-                   "at": time.time()}, lease_file)
-    before_cursor = cursor()
-    refused = json.loads(d.desktop_click_verified(*center_of("七", calc), title_substring=calc,
-                                                  expect_text="ZZZ-never-2026"))
-    after_cursor = cursor()
-    check("foreign lease refuses the click and delivers nothing",
-          refused.get("busy") is True and refused.get("effect") == "not-delivered"
-          and before_cursor == after_cursor,
-          "effect={} holder={}".format(refused.get("effect"), refused.get("holder")))
-    try:
-        os.remove(lease_path)
-    except OSError:
-        pass
+
+    # ---- exclusion is kernel-enforced: a second PROCESS is refused ----
+    holder = subprocess.Popen([sys.executable, os.path.join(HERE, "hold_mutex.py"), str(hwnd),
+                               "--seconds", "45", "--module-dir", args.module_dir],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ready = False
+    for _ in range(40):
+        time.sleep(0.25)
+        if json.loads(d.desktop_lease_status()).get("count", 0) > 0:
+            ready = True
+            break
+    if not ready:
+        skip("a second process holding the window blocks the click",
+             "the holder process did not take the mutex")
+    else:
+        before_cursor = cursor()
+        refused = json.loads(d.desktop_click_verified(*center_of("七", calc), title_substring=calc,
+                                                      expect_text="ZZZ-never-2026"))
+        after_cursor = cursor()
+        check("a second process holding the window blocks the click",
+              refused.get("busy") is True and refused.get("effect") == "not-delivered"
+              and before_cursor == after_cursor,
+              "effect={} reason={}".format(refused.get("effect"), str(refused.get("reason"))[:46]))
+
+    # ---- kill the holder: the label stays, the mutex is free, and only the mutex decides ----
+    holder.kill()
+    holder.wait(timeout=15)
+    time.sleep(0.6)
     status = json.loads(d.desktop_lease_status())
-    check("lease released after the action", status.get("count") == 0,
-          "leases={}".format(status.get("count")))
+    stale = [entry for entry in status.get("leases", []) if entry.get("stale_label") is True]
+    check("a killed holder leaves a stale label that is reported as stale (the mutex decides)",
+          len(stale) >= 1 and all(entry.get("held") is False for entry in stale),
+          "labels={} stale={}".format(status.get("count"), len(stale)))
+
+    start = time.time()
+    took_over = json.loads(d.desktop_click_verified(*title_point(calc), title_substring=calc,
+                                                    expect_text="ZZZ-never-2026"))
+    elapsed = round(time.time() - start, 2)
+    check("a killed holder does not block: takeover is immediate (no TTL wait)",
+          took_over.get("busy") is not True and elapsed < 20,
+          "effect={} abandoned_flag={} elapsed={}s".format(took_over.get("effect"),
+                                                           took_over.get("took_over_abandoned"), elapsed))
+    for entry in status.get("leases", []):
+        path = d._cua_lease_path(entry.get("key") or "")
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    check("labels are cleared after the action",
+          json.loads(d.desktop_lease_status()).get("count") == 0,
+          "labels={}".format(json.loads(d.desktop_lease_status()).get("count")))
 
     before_cursor = cursor()
     stale = json.loads(d.desktop_click_verified(*center_of("七", calc), title_substring=calc,
@@ -168,6 +210,8 @@ def main():
           stale.get("stale_capture") is True and before_cursor == after_cursor,
           "reason={}".format(str(stale.get("reason"))[:60]))
 
+    d.desktop_key("esc")  # clean entry: earlier cases may have left a digit in the display
+    time.sleep(0.3)
     for label in ("七", "加", "八"):
         d.desktop_click(*center_of(label, calc))
         time.sleep(0.3)
