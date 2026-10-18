@@ -85,6 +85,15 @@ artifacts:
     cross_agent: any A2A standard client (any A2A peer)
     version: 1.7.0
 
+  - id: computer-use-cua-driver-native
+    kind: plugin
+    dir: plugins/computer-use-cua-driver-native
+    desc: macOS 桌面执行层（DSH 插件，Cua Driver SDK）：首次接入探针 probe_app / 路由判定 / 网格静止判据（实测阈值：转圈 0.30%、光标 0.0145%）/ 窗口租约 / CDP 助手
+    runtime: node>=24 + @trycua/cua-driver 0.28.x (darwin-arm64)
+    dsh_install: 覆盖 packages/experimental/computer-use-cua-driver-native 并在 profile 里加载该包；npx vitest run 81 项通过
+    cross_agent: 免插件等价物见 guytogay/computer-use-upgrade（mcp/probe-server.mjs 独立 MCP server + verify/probe-app.mjs）
+    version: 0.1.0
+
   - id: mobile-remote
     kind: deployment-kit
     dir: mobile-remote
