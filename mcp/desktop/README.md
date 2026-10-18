@@ -74,6 +74,11 @@ python verify/acceptance.py --module-dir <驱动目录> --json report.json
 - **回读按通道分级**：ValuePattern → TextPattern → 元素树；三者都读不到时报 `unverifiable`，
   不能报 `not-met`（记事本的编辑器就是"读不到但确实写进去了"的例子）。
 - **租约是单边礼貌**：`open(...,'wx')` 原子创建、30 s 过期、按窗口而非整机；它约束不了别人家的 agent。
+- **UIA 输出与窗口身份**：helper 强制 UTF-8 输出——否则在宿主内包含中文的回复会变成空输出（实测
+  `desktop_observe("设置")` → `{"ok":false,"msg":"empty output"}`，同一调用在交互式 shell 里正常）；
+  窗口解析先按 Win32 标题找 hwnd 再 `FromHandle`，因为打包应用的 UIA 名与标题栏不一致。
+- **空元素树不等于没变化**：UWP/XAML 窗口对 UIA2 不暴露树，空树的 revision 是常量（`e3b0c442…`），
+  这类窗口只能用像素判据。
 - **探针结论取决于你挑的元素**：`desktop_probe_app` 默认只读，点/打字必须显式 `confirm=True`，
   且探测字符会撤销并读回复核。
 

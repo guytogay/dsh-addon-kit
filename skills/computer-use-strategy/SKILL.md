@@ -47,6 +47,8 @@ ok: true, verified: false, effect: "unverifiable", verification_required: true
 期望文本必须**动作前不在、动作后出现**。
 - 动作前就在屏上的字符串**不是证据**（本机实测：`idle` → `CLICKED-OK` 才算 verified）。
 - 声明了"本来就存在"的期望 → 判 `invalid-expectation`，不要算通过。
+- **元素树为空（0 元素）时，一切文本判据都不成立**：空树的 revision 是常量（`e3b0c442…`），
+  它的"没变"不能当证据；这种窗口（UWP/XAML、画布）只能用像素差或视觉判据，并如实说明。
 
 ### B3 坐标绑定帧
 从哪一帧读出的坐标，只能用于那一帧：每次动作前重新观察，把当前 `frame_id` 一起传回；
@@ -154,6 +156,10 @@ python <把 acceptance.py 放在哪>/acceptance.py --module-dir "$env:USERPROFIL
 | Chromium 窗口默认不暴露 UIA 树（0 元素） | 沿用他机实测，**本机未复验** | 走 Playwright DOM |
 | 文本视图用坐标点击不定位光标 | 沿用他机实测，**本机未复验** | 键盘 / `desktop_uia_setvalue` |
 | 记事本编辑器不暴露 ValuePattern/TextPattern | 本机实测 2026-10-19 | 用有 ValuePattern 的控件；或判 `unverifiable` 而非 `not-met` |
+| UWP/XAML 窗口对 **UIA2** 不暴露树（PowerShell 5.1 加载的 UIAutomationClient），「设置」深度 6/10 都是 0 元素 | 本机实测 2026-10-19 | 走像素/视觉；这类窗口上文本判据不可能成立 |
+| 中文/非 ASCII 标题与控件名曾在宿主内变成**空输出**（helper 继承了父进程控制台编码） | 本机实测 2026-10-19，已在 `uia_helper.ps1` 钉死 UTF-8 输出 | 生产者与消费者同口径（消费端本来就按 UTF-8 解码） |
+| 打包应用（UWP）的 UIA 名与标题栏不一致，按名字找不到窗口 | 本机实测 2026-10-19 | 先按 Win32 窗口标题找 hwnd 再 `FromHandle`（helper 已改） |
+| 打包应用的窗口所有者常是 `ApplicationFrameHost.exe`，不是应用自己 → `probe_app` 的 Chromium/Electron 证据**不完整**（实测「计算器」的 exe 报的是 frame host） | 本机实测 2026-10-19 | 当"未分类"处理而不是"非 Chromium"；要确证就找子窗口的真实 pid |
 | Open/Save 原生面板不可自动化 | 沿用他机（macOS）结论 | 网页走 `browser_file_upload`；原生应用把路径粘进应用自身 UI |
 | 网页 HTML5 拖放不可用 | 沿用他机实测，**本机未复验** | 让页面暴露可编程接口，或点/键盘代替拖放 |
 | 无模型级取消原语 | 契约层面的诚实结论 | "中止=未知，先复验" |

@@ -1,5 +1,5 @@
 # dsh-addon-kit manifest — 机器可读制品清单
-kit_version: 1.0.0
+kit_version: 1.1.0
 generated: 2026-09-03
 source_audit: ../DSH-自定义审计-2026-09-03.md
 secrets_included: false
@@ -17,10 +17,10 @@ artifacts:
   - id: computer-use-strategy
     kind: skill
     dir: skills/computer-use-strategy
-    desc: 浏览器/桌面执行阶梯（L1 DOM -> L2 UIA -> L3 截图 -> L4 物理）+ 动作契约（三态效果、增量判据、帧绑定、双信号静止、首次接入路由）
+    desc: 浏览器/桌面执行阶梯（L1 DOM -> L2 UIA -> L3 截图 -> L4 物理）+ 动作契约（三态效果、增量判据、帧绑定、双信号静止、首次接入路由）；v1.1.1 补 UWP/UIA2 与空树判据边界
     dsh_install: copy to ~/.dsh/skills/computer-use-strategy/
     cross_agent: Claude/Cursor skills format
-    version: 1.1.0
+    version: 1.1.1
 
   - id: desktop-mcp
     kind: mcp-server
@@ -30,7 +30,7 @@ artifacts:
     tools: 25
     dsh_install: install.ps1 + cordis-patch.yaml；verify/acceptance.py 是可重跑验收（PASS/FAIL/SKIP，SKIP 不算过）
     cross_agent: any MCP stdio client
-    version: 1.1.0
+    version: 1.1.1
 
   - id: playwright-browsers-mcp
     kind: mcp-server
@@ -96,7 +96,7 @@ artifacts:
   - id: dsh-patch-kit-release
     kind: ui-patches
     dir: ui-patches/dsh-patch-kit-release
-    desc: Web UI/性能/内网补丁库（mobile-pwa/inject + 界面补丁 + 2026-09-08 移动性能/内网包：提问框生存/并行加载/120s超时/内网模式/静态+API gzip/远程地址设置放行）
+    desc: Web UI/性能/内网补丁库（mobile-pwa/inject + 界面补丁 + 2026-09-08 移动性能/内网包：提问框生存/并行加载/120s超时/内网模式/静态+API gzip）
     source_live: ../upstream/dsh-patch-kit
     dsh_install: apply-mobile.sh / verify.sh (linux)
     version: snapshot-2026-09-08

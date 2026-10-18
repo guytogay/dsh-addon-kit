@@ -4,8 +4,58 @@
 # Output: one JSON line to stdout.
 param([Parameter(Mandatory=$true)][string]$Json)
 
+# The consumer decodes stdout as UTF-8. The producer must not inherit the parent console's
+# codepage: under an MCP host a non-ASCII reply (Chinese window/control names) came back empty.
+try {
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    [Console]::OutputEncoding = $utf8
+    $OutputEncoding = $utf8
+} catch { }
+
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+
+# Resolve a window the way the agent sees it: by its native window text (EnumWindows), then
+# FromHandle. Matching only the UIA element name fails on packaged apps, whose automation name
+# drifts from the title bar (the Settings window is titled "设置" and reports a different name),
+# and their automation elements carry no NativeWindowHandle to fall back on.
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class UiaWinText {
+    private delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLengthW(IntPtr hWnd);
+    public static string Title(IntPtr hWnd) {
+        if (hWnd == IntPtr.Zero) { return ""; }
+        int length = GetWindowTextLengthW(hWnd);
+        if (length <= 0) { return ""; }
+        StringBuilder buffer = new StringBuilder(length + 1);
+        GetWindowTextW(hWnd, buffer, buffer.Capacity);
+        return buffer.ToString();
+    }
+    public static IntPtr FindByTitle(string part) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+            if (!IsWindowVisible(hWnd)) { return true; }
+            string title = Title(hWnd);
+            if (title.Length > 0 && title.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0) {
+                found = hWnd;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+}
+'@
+} catch { }
 
 $AE = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
@@ -14,6 +64,15 @@ $req = $Json | ConvertFrom-Json
 
 function Get-Window([string]$titleLike) {
     $root = $AE::RootElement
+    # 1) native window text first: this is the identity the agent sees in window listings, and it
+    #    is the only one that works for packaged apps (no NativeWindowHandle on their elements).
+    if ("UiaWinText" -as [type]) {
+        try {
+            $h = [UiaWinText]::FindByTitle($titleLike)
+            if ($h -ne [IntPtr]::Zero) { return $AE::FromHandle($h) }
+        } catch { }
+    }
+    # 2) automation name: covers windows whose automation name differs from their title bar.
     $windows = $root.FindAll($TS::Children, [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($w in $windows) {
         $n = $w.Current.Name
