@@ -1,6 +1,6 @@
 # dsh-addon-kit manifest — 机器可读制品清单
-kit_version: 1.3.0
-generated: 2026-09-03
+kit_version: 1.4.0
+generated: 2026-11-07
 source_audit: ../DSH-自定义审计-2026-09-03.md
 secrets_included: false
 
@@ -21,6 +21,23 @@ artifacts:
     dsh_install: copy to ~/.dsh/skills/computer-use-strategy/
     cross_agent: Claude/Cursor skills format
     version: 1.2.0
+
+  - id: agent-process-review
+    kind: skill
+    dir: skills/agent-process-review
+    desc: 按真实会话与工具证据复盘 Agent 任务执行；提出最小改进与后续现实验收，不自动审计所有任务
+    dsh_install: copy skills/agent-process-review/ to the Host's supported skills directory
+    cross_agent: any skills-compatible Agent; ordinary Markdown instructions also portable
+    version: 0.1.0
+
+  - id: agent-process-exchange
+    kind: tool
+    dir: tools/agent-process-exchange
+    desc: 可选的双向文件信箱（任务轨迹与 review）；原子发布、SHA-256、回评关联、幂等重试、有界等待
+    runtime: python>=3.9 (standard library only)
+    dsh_install: copy tools/agent-process-exchange/ and integrate CLI with the Agent Host's task hooks
+    cross_agent: any Agent on a trusted shared filesystem; remote file transport must be provided by Host
+    version: 0.1.0
 
   - id: desktop-mcp
     kind: mcp-server
