@@ -14,6 +14,8 @@ packaged as independent, portable artifacts.
 
 | Path | What it is | Reuse target |
 |---|---|---|
+| `skills/agent-process-review` | Evidence-based review of actual Agent task traces; minimal improvements and later real-task validation | Skills-compatible Agents (opt-in) |
+| `tools/agent-process-exchange` | File mailbox: verified trace delivery and peer review replies (SHA-256, idempotency, bounded wait) | Any two Agents with a trusted shared directory; remote transport requires Host integration |
 | `skills/computer-use-strategy` | Execution strategy skill (token-saving ladder: DOM → UIA → screenshots → physical input) | Any DSH (`~/.dsh/skills/`), any Claude/Cursor skill dir |
 | `mcp/desktop` | Windows desktop execution layer: 10 physical + 7 UIA tools (screenshot / click / type / hotkey / window mgmt / UI-Automation tree, invoke, setvalue) | Any MCP client (stdio); `pip install mcp<2 mss` |
 | `mcp/playwright-browsers` | Chrome / Edge / Firefox browser layer via official @playwright/mcp (DOM-level, 24 tools each, persistent profiles) | Any MCP client; `npx @playwright/mcp --browser <browser>` |
@@ -21,6 +23,8 @@ packaged as independent, portable artifacts.
 | `bridges/a2a-peer-bridge` | A2A v1.0 endpoint + cross-host MCP bridge (card discovery / run_task / message / push callback with Bearer + HMAC signature auth) | **Any A2A standard client** (another DSH, peer agent, …) |
 | `mobile-remote` | Phone access kit: Tailscale portproxy + tailscale serve HTTPS + trust hosts | Any DSH deployment (Tailscale layer is generic) |
 | `ui-patches/dsh-patch-kit-release` | DSH web-frontend UI patch library (mobile PWA/injection + 50+ layout patches; marker-based, idempotent) | DSH Linux/LXC deployments |
+
+The review skill and file exchange are **independent and optional**: no automatic audit, no unattended self-modification, no claim of improvement without later evidence. See [exchange usage](tools/agent-process-exchange/README.md).
 
 Machine-readable index: `addon-manifest.yaml`. 中文版说明见 [README.zh.md](README.zh.md).
 
