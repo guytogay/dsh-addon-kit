@@ -9,6 +9,8 @@
 
 | 目录 | 制品 | 跨 DSH 复用 | 跨 Agent 复用（非 DSH） |
 |---|---|---|---|
+| `skills/agent-process-review` | Agent 任务过程复盘 Skill：基于真实轨迹审查与最小改进 | 任意兼容 Skills 的 Agent，按需使用 |
+| `tools/agent-process-exchange` | 双向文件信箱：轨迹投递、完整性校验、回评与幂等重试 | 共享可信目录的 Agent；跨主机需要宿主提供文件传输 |
 | `skills/computer-use-strategy` | 执行策略 skill（省 token 阶梯） | 复制到任意 DSH `~/.dsh/skills/` | 复制成 Claude/Cursor skill 格式 |
 | `mcp/desktop` | Windows 桌面执行层（物理+UIA，17 工具） | cordis patch + install.ps1 | 任意 MCP 客户端 stdio（pip 装 mcp+mss） |
 | `mcp/playwright-browsers` | Chrome/Edge/Firefox 三浏览器（DOM 级） | cordis patch ×3 | 任意 MCP 客户端（npx @playwright/mcp） |
@@ -16,6 +18,8 @@
 | `bridges/a2a-peer-bridge` | A2A v1.0 端点 + Peer MCP 桥（生产级） | 两端部署（PC↔任意 peer） | **任何 A2A 标准客户端** |
 | `mobile-remote` | 手机 HTTPS 双通道接入包 | setup.ps1 + patch 片段 | 仅 DSH（Tailscale 层是通用的） |
 | `ui-patches/dsh-patch-kit-release` | Web UI 补丁库（移动端/布局） | 复制应用到目标 web-frontend | 仅 DSH 构建 |
+
+**边界**：评审 Skill 与文件交换工具互相独立、按需启用；不会自行启动另一 Agent，也不会自动修改指令或宣称自我进化。现有 A2A 桥可以传递短引用，不能直接承载完整的长会话文件。见 [使用说明](tools/agent-process-exchange/README.md)。
 
 ## 安装矩阵速查
 
