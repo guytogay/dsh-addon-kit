@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent 任务过程复盘"
+  short_description: "审查任意 Agent 或自身的任务过程，提出最小改进并设计真实验收"
+  default_prompt: "使用 $agent-process-review 审查这次任务过程，依据原始目标和证据提出最小改进，并说明如何用后续真实任务验证。"
