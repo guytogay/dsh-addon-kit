@@ -20,3 +20,5 @@ jobs:
           node-version: '20'
       - name: Run sanity scan (private ids / secrets / placeholders / syntax)
         run: python3 ci-scan.py
+      - name: Test agent process exchange
+        run: python3 -m unittest discover -s tools/agent-process-exchange -p 'test_*.py'
